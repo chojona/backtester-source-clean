@@ -1,0 +1,32 @@
+{
+  "cash": 100000,
+  "data_source": "Replace with provider, export version, date acquired and licence provenance",
+  "input_price_basis": "raw",
+  "calendar": {"source": "Weekday template only; supply dated CME holiday/early-close overrides", "overrides": {}},
+  "features": {"basis": "typical", "ib_minutes": 60, "atr_period": 14},
+  "fills": {"limit_mode": "trade_through", "ambiguity": "CONSERVATIVE", "participation": null},
+  "execution_by_symbol": {
+    "NQ": {"commission": 2, "exchange_fee": 1, "slippage_ticks": 1},
+    "MNQ": {"commission": 1, "exchange_fee": 0.5, "slippage_ticks": 1},
+    "ES": {"commission": 2, "exchange_fee": 1, "slippage_ticks": 1},
+    "MES": {"commission": 1, "exchange_fee": 0.5, "slippage_ticks": 1},
+    "GC": {"commission": 2, "exchange_fee": 1, "slippage_ticks": 1},
+    "MGC": {"commission": 1, "exchange_fee": 0.5, "slippage_ticks": 1}
+  },
+  "risk": {"max_risk_per_trade": 1000, "max_daily_loss": 2000, "max_trades_per_day": 10, "max_simultaneous_positions": 1, "max_contracts": 10},
+  "risk_by_symbol": {
+    "NQ": {"margin_per_contract": 15000}, "MNQ": {"margin_per_contract": 1500},
+    "ES": {"margin_per_contract": 15000}, "MES": {"margin_per_contract": 1500},
+    "GC": {"margin_per_contract": 15000}, "MGC": {"margin_per_contract": 1500}
+  },
+  "roll": {"policy": "fixed", "days_before_expiration": 5, "adjustment": "forward_additive", "position_policy": "flatten", "expirations": {}},
+  "research": {"horizons_minutes": [5, 15, 30, 60], "require_complete_week": true},
+  "research_by_symbol": {
+    "NQ": {"thresholds_points": [5, 10, 20, 30], "through_points": 5, "approach_min_points": 1},
+    "MNQ": {"thresholds_points": [5, 10, 20, 30], "through_points": 5, "approach_min_points": 1},
+    "ES": {"thresholds_points": [2, 4, 8, 12], "through_points": 2, "approach_min_points": 0.5},
+    "MES": {"thresholds_points": [2, 4, 8, 12], "through_points": 2, "approach_min_points": 0.5},
+    "GC": {"thresholds_points": [1, 2, 4, 6], "through_points": 1, "approach_min_points": 0.2},
+    "MGC": {"thresholds_points": [1, 2, 4, 6], "through_points": 1, "approach_min_points": 0.2}
+  }
+}

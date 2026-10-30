@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>NQ charts</title>
+<!-- TradingView Lightweight Charts™
+Copyright (с) 2025 TradingView, Inc. https://www.tradingview.com/ -->
+<style>
+:root{color-scheme:dark;--page:#0a1019;--panel:#101722;--text:#c6d2e2;--muted:#8293aa;--blue:#61a7ff;--teal:#46c7ac;--rose:#ec7e92;--gold:#f2bd70;--purple:#ad9af7}
+*{box-sizing:border-box}body{margin:0;background:var(--page);color:var(--text);font:14px/1.5 system-ui,-apple-system,sans-serif}
+main{max-width:1800px;margin:0 auto;padding:24px 24px 64px;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:20px}
+.chart{margin:0;min-width:0;background:var(--panel);border:1px solid #1e2939;border-radius:12px;overflow:hidden;position:relative;display:flex;flex-direction:column}
+.chart-header{display:flex;gap:14px;align-items:center;justify-content:space-between;padding:18px 20px 10px;flex-wrap:wrap}
+h2{font-size:15px;font-weight:500;letter-spacing:.015em;margin:0}.subtle{color:var(--muted);font-size:12px}
+.controls{display:flex;gap:7px;align-items:center;flex-wrap:wrap}select,button{font:inherit;color:var(--text);background:#172131;border:1px solid #2a384d;border-radius:6px;padding:6px 10px}
+.view-controls{margin-left:auto;flex-wrap:nowrap}.view-controls button{min-width:36px;min-height:36px}.view-controls button:last-child{white-space:nowrap}button{cursor:pointer}button:hover{background:#22314a}button[aria-pressed=true]{background:#203958;color:#a9cfff;border-color:#385d89}
+select:focus-visible,button:focus-visible,.chart-host:focus-visible{outline:2px solid var(--blue);outline-offset:3px}
+.hud{font:12px/1.6 ui-monospace,SFMono-Regular,monospace;color:#92a4ba;padding:0 20px 8px;min-height:28px;display:flex;gap:15px;flex-wrap:wrap;font-variant-numeric:tabular-nums}
+.hud b{font-weight:500;color:var(--text)}.chart-host{height:320px;min-height:320px;width:100%;flex:1}.trading .chart-host{height:560px;min-height:560px}
+.legend{display:flex;gap:16px;flex-wrap:wrap;color:var(--muted);font-size:12px}.legend span{display:inline-flex;align-items:center;gap:6px}.legend i{height:2px;width:15px;display:inline-block}
+#observed-legend[hidden],.empty[hidden]{display:none}.chart-footer{color:var(--muted);font-size:11px;padding:8px 20px;text-align:right}
+.empty{position:absolute;left:100px;right:20px;top:50%;text-align:center;color:var(--muted);pointer-events:none;font-size:13px}
+.chart:fullscreen{border:0;border-radius:0;background:var(--panel);overflow:hidden}.chart:fullscreen .chart-host{height:calc(100vh - 112px)}
+@media(max-width:1000px){main{grid-template-columns:minmax(0,1fr)}}
+@media(max-width:700px){main{padding:10px 8px 32px;gap:16px}.chart-header{padding:14px 12px 8px}.trading .chart-host{height:420px;min-height:420px}.hud{padding-left:12px;gap:10px}.legend{gap:9px}.chart-host{height:285px;min-height:285px}}
+</style>
+<main>
+<section id="trading-panel" class="chart trading" aria-label="TradingView price and volume chart">
+<div class="chart-header"><h2 id="price-title">NQ</h2><div class="controls">
+<select id="session" aria-label="Trading session"></select>
+<div class="controls" aria-label="OHLC and volume timeframe"><button type="button" data-interval="1" aria-pressed="false">1m</button><button type="button" data-interval="5" aria-pressed="true">5m</button><button type="button" data-interval="15" aria-pressed="false">15m</button><button type="button" data-interval="60" aria-pressed="false">1H</button><button type="button" data-interval="240" aria-pressed="false">4H</button><button type="button" data-interval="1440" aria-pressed="false">1D</button></div>
+<select id="chart-style" aria-label="Price chart style"><option value="candles">Candles</option><option value="bars">OHLC bars</option></select>
+<select id="price-scale" aria-label="Price scale"><option value="Normal">Linear</option><option value="Logarithmic">Log</option><option value="Percentage">%</option></select>
+<button type="button" id="fullscreen" aria-label="Fullscreen price chart">⛶</button>
+</div></div>
+<div id="ohlc" class="hud" aria-live="off"></div>
+<div id="trading" class="chart-host" tabindex="0" role="group" aria-label="Interactive candlestick or OHLC chart with a resizable volume pane"></div>
+<div id="price-empty" class="empty" hidden>No complete bars at this interval</div>
+<div class="chart-footer"><span id="bar-count"></span> · America/New_York</div>
+</section>
+<section class="chart"><div class="chart-header"><h2>One-minute log returns</h2><span class="subtle">bp, columns from zero</span></div><div id="returns" class="chart-host" role="group" aria-label="Interactive one-minute log returns"></div></section>
+<section class="chart"><div class="chart-header"><h2>Cumulative realized variance</h2><div class="legend"><span><i style="background:var(--blue)"></i>Full session</span><span><i style="background:var(--gold)"></i>RTH</span><span><i style="background:var(--teal)"></i>Overnight</span><span><i style="background:var(--purple)"></i>Post-RTH</span><span id="observed-legend" hidden><i style="background:var(--rose)"></i>Observed only</span></div></div><div id="cumulative" class="chart-host" role="group" aria-label="Interactive cumulative realized variance"></div><div class="chart-footer">bp²</div></section>
+<section class="chart"><div class="chart-header"><h2>Historical intraday variance profile</h2><span id="references" class="subtle"></span></div><div id="profile" class="chart-host" role="group" aria-label="Historical variance shares from prior complete sessions"></div><div id="profile-empty" class="empty" hidden>No prior complete matching sessions</div><div class="chart-footer">Slot share (%), each minute stands alone</div></section>
+__OVERVIEW_CHARTS__
+</main>
+<script id="chart-data" type="application/json">__CHART_DATA__</script>
+<script src="assets/lightweight-charts-5.1.0.js"></script>
+<script src="assets/volatility_chart_data.js?v=12"></script>
+<script src="assets/volatility_chart_ui.js?v=12"></script>
+</html>

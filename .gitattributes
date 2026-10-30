@@ -1,0 +1,9 @@
+* text=auto
+*.py text eol=lf
+*.md text eol=lf
+*.json text eol=lf
+# Preserve fixture bytes and the hashes recorded in research examples.
+*.csv -text whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol
+*.toml text eol=lf
+*.txt text eol=lf
+*.lock text eol=lf

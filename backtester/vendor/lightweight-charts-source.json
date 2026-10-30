@@ -1,0 +1,8 @@
+{
+  "package": "lightweight-charts",
+  "version": "5.1.0",
+  "tarball": "https://registry.npmjs.org/lightweight-charts/-/lightweight-charts-5.1.0.tgz",
+  "integrity": "sha512-jEAYR4ODYeyNZcWUigsoLTl52rbPmgXnvd5FLIv/ZoA/2sSDw63YKnef8n4yhzum7W926yHeFwlm7ididKb7YQ==",
+  "javascript_sha256": "756b0ba9f58930226d6b8b9d47ad310448ab85d799ea1f7c2c02304777c10b52",
+  "notice_url": "https://raw.githubusercontent.com/tradingview/lightweight-charts/v5.1.0/NOTICE"
+}
