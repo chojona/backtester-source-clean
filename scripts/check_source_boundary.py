@@ -18,11 +18,24 @@ JSON_PATHS = {
     "config/research.example.json",
     "config/approved_evidence.json",
     "backtester/vendor/lightweight-charts-source.json",
+    "terminal/web/package.json",
+    "terminal/web/package-lock.json",
+    "terminal/web/tsconfig.json",
 }
 SOURCE_SUFFIXES = {".py", ".js", ".html", ".md", ".txt", ".lock", ".toml", ".ini", ".yml"}
-DOTFILES = {".gitignore", ".gitattributes", ".env.example"}
+DOTFILES = {".gitignore", ".gitattributes", ".env.example", "terminal/.env.example"}
+TERMINAL_WEB_SUFFIXES = {".ts", ".tsx", ".css", ".mjs"}
 FORBIDDEN_ROOTS = {"data", "results", "reports", "calendars", "api", "frontend"}
 SECRET = re.compile(rb"(?:gh[pousr]_[A-Za-z0-9]{25,}|github_pat_[A-Za-z0-9_]{30,}|-----BEGIN (?:RSA |OPENSSH |EC )?PRIVATE KEY-----|sk-[A-Za-z0-9]{35,})")
+
+
+def source_path_allowed(name):
+    path = PurePosixPath(name)
+    if (path.parts[0] in FORBIDDEN_ROOTS
+            or name.startswith(("backtester/nq_", "backtester/spy_", "tests/test_nq_", "tests/test_spy_"))):
+        return False
+    return (name in JSON_PATHS or name in DOTFILES or path.suffix in SOURCE_SUFFIXES
+            or (name.startswith("terminal/web/") and path.suffix in TERMINAL_WEB_SUFFIXES))
 
 
 def main():
@@ -41,10 +54,7 @@ def main():
             problems.append(f"Nested repository is not allowed: {name}")
             continue
         checked += 1
-        path = PurePosixPath(name)
-        if (path.parts[0] in FORBIDDEN_ROOTS
-                or name.startswith(("backtester/nq_", "backtester/spy_", "tests/test_nq_", "tests/test_spy_"))
-                or (name not in JSON_PATHS and name not in DOTFILES and path.suffix not in SOURCE_SUFFIXES)):
+        if not source_path_allowed(name):
             problems.append(f"Disallowed historical path or file type: {name}")
         content = git("cat-file", "blob", sha)
         if b"\0" in content or SECRET.search(content):
@@ -55,6 +65,10 @@ def main():
                 problems.append("The published evidence registry must be empty")
         if name == ".env.example" and content.splitlines()[-1:] != [b"DATABENTO_API_KEY="]:
             problems.append("Credential template must contain an empty key")
+        if name == "terminal/.env.example" and content.splitlines() != [
+                b"# Existing sealed v2.0.0 build directory, outside this source checkout.",
+                b"NQ_DATA_ROOT=/absolute/path/to/nq-ohlcv-research-v2/build"]:
+            problems.append("Terminal template must contain only the placeholder dataset path")
     for problem in problems:
         print(problem, file=sys.stderr)
     if problems:

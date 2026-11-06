@@ -50,6 +50,11 @@ node_modules/
 .DS_Store
 *.swp
 *.swo
+# Local terminal builds and test output
+.next/
+test-results/
+playwright-report/
+*.tsbuildinfo
 
 # Local agent worktrees
 .worktrees/
