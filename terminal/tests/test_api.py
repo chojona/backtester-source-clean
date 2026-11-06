@@ -191,3 +191,75 @@ def test_historical_coverage_and_timezone_across_years(db,year):
     assert datetime.fromisoformat(snap['session_start']).tzinfo is not None
     et=datetime.fromisoformat(snap['session_start']).astimezone(ZoneInfo('America/New_York'))
     assert et.hour==18
+
+
+def test_v02_rth_display_filters_before_aggregation(db, identity, full):
+    from terminal.data import ET
+    rth = [b for b in full['bars'] if (9,30) <= (datetime.fromtimestamp(b['time'], ET).hour, datetime.fromtimestamp(b['time'], ET).minute) < (16,0)]
+    result = db.snapshot(*identity, display='RTH')
+    assert result['bars']
+    assert [tuple(b[k] for k in ('time','open','high','low','close','volume')) for b in result['bars']] == [tuple(b[k] for k in ('time','open','high','low','close','volume')) for b in rth]
+    daily = db.snapshot(*identity, timeframe='daily', display='RTH')
+    assert len(daily['bars']) == 1
+    assert daily['bars'][0]['high'] == max(b['high'] for b in rth)
+    assert daily['stats']['volume'] == sum(b['volume'] for b in rth)
+    assert daily['cursor'] == full['total_minutes']
+    before_open = next(i for i,b in enumerate(full['bars']) if b['time']==rth[0]['time'])
+    early = db.snapshot(*identity,cursor=before_open,display='RTH')
+    assert early['bars']==[] and early['stats']['high'] is None
+
+
+def test_v02_bands_independently_recomputed_and_causal(db, identity, full):
+    prefix = db.snapshot(*identity,cursor=113,timeframe='5m',deviations=2)
+    raw = full['bars'][:113]
+    volume = sum(b['volume'] for b in raw)
+    mean = sum((b['high']+b['low']+b['close'])/3*b['volume'] for b in raw)/volume
+    variance = sum((((b['high']+b['low']+b['close'])/3-mean)**2)*b['volume'] for b in raw)/volume
+    assert prefix['bars'][-1]['vwap_upper'] == pytest.approx(mean+2*math.sqrt(variance))
+    assert prefix['bars'][-1]['vwap_lower'] == pytest.approx(mean-2*math.sqrt(variance))
+    cutoff = datetime.fromisoformat(prefix['as_of'])
+    bounded = db.snapshot(*identity,timeframe='5m',as_of=cutoff,deviations=2)
+    assert prefix['bars']==bounded['bars']
+    assert all(b['available_at'] <= cutoff.timestamp() for b in prefix['bars'])
+    assert prefix['explorer']['rows']==prefix['bars'][:50]
+
+
+def test_v02_opening_range_parameters_and_jump(db, identity, full):
+    from terminal.data import ET
+    rth = [b for b in full['bars'] if (9,30) <= (datetime.fromtimestamp(b['time'], ET).hour, datetime.fromtimestamp(b['time'], ET).minute) < (9,45)]
+    cursor = db.cursor_at(*identity,'09:45')
+    result = db.snapshot(*identity,cursor=cursor,opening_minutes=15)
+    assert result['stats']['or_high']==max(b['high'] for b in rth)
+    assert result['stats']['or_low']==min(b['low'] for b in rth)
+    assert result['stats']['or_complete'] is True
+    assert datetime.fromisoformat(result['as_of']).astimezone(ET).strftime('%H:%M')=='09:45'
+    with pytest.raises(DataError):db.cursor_at(*identity,'99:00')
+
+
+def test_v02_api_validation(client,identity):
+    for extra in ({'display':'FAKE'},{'opening_minutes':0},{'deviations':10}):
+        assert client.get('/api/snapshot',params=params(identity,**extra)).status_code==422
+    assert client.get('/api/replay-time',params=params(identity,time='09:45')).status_code==200
+
+
+def test_v02_rth_previous_levels_match_exact_prior_context(db,identity):
+    from terminal.data import ET
+    result=db.snapshot(*identity,display='RTH')
+    previous=result['previous']
+    if previous['date'] is None:
+        pytest.skip('Selected session has no eligible previous context')
+    rows=db.query('''SELECT timestamp_utc, high, low FROM context WHERE trading_date=? AND contract=?
+      AND selected_contract=? AND full_grid_observed IS TRUE AND boundary_unresolved IS FALSE''',
+      [str(previous['date']),identity[0],identity[0]])
+    rth=[r for r in rows if (9,30) <= (r['timestamp_utc'].astimezone(ET).hour,r['timestamp_utc'].astimezone(ET).minute) < (16,0)]
+    assert previous['high']==max(r['high'] for r in rth)
+    assert previous['low']==min(r['low'] for r in rth)
+
+
+def test_v02_indicator_endpoint_matches_snapshot_bands(client,identity):
+    q=params(identity,cursor=113,timeframe='5m',display='RTH',opening_minutes=15,deviations=2)
+    snapshot=client.get('/api/snapshot',params=q).json()
+    indicators=client.get('/api/indicators',params=q).json()
+    assert indicators['as_of']==snapshot['as_of']
+    assert indicators['previous']==snapshot['previous']
+    assert indicators['points']==[{k:b[k] for k in ('time','vwap','vwap_upper','vwap_lower','or_high','or_low','available_at')} for b in snapshot['bars']]

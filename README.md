@@ -24,6 +24,6 @@ The generator uses formulas, not observed market records. Its output stays in ig
 
 Never add market records, provider responses, research outputs, credentials, or private evidence to this repository. Provider access requires separately obtained credentials and appropriate data rights.
 
-## Local NQ research terminal
+## NQ Research Terminal v0.2
 
-The [terminal setup guide](terminal/README.md) covers the Next.js/FastAPI application, real v2.0.0 dataset binding, causal historical replay, API, and tests. Historical data stays in its existing licensed location; this source export includes no market records.
+The local read-only FastAPI/Next.js terminal is documented in [terminal/README.md](terminal/README.md). It uses the existing sealed release outside this checkout, with persistent drawings, a resizable workspace, configurable indicators, and causal replay. No market data is bundled.
