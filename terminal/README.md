@@ -19,7 +19,7 @@ cp terminal/.env.example terminal/.env
 .venv-terminal/bin/python -m terminal.launch
 ```
 
-Open **http://127.0.0.1:3000**. Both servers bind only to loopback; Ctrl-C stops both. Ports 3000 and 8000 must be free. The ignored `terminal/.env` in the development workspace is already configured to the discovered sibling research release; no user-specific path is committed. An exported `NQ_DATA_ROOT` overrides that file.
+Open **http://127.0.0.1:3000**. Both servers bind only to loopback; Ctrl-C stops both. Ports 3000 and 8000 must be free. Create `terminal/.env` locally for your release location; no user-specific path is committed. An exported `NQ_DATA_ROOT` overrides that file. The launcher reads `.env` for its child processes, but separate API/test processes need that environment variable exported explicitly.
 
 For production mode:
 
@@ -43,7 +43,7 @@ DuckDB queries Parquet with date, contract, availability, and eligibility predic
 ## Use
 
 - Select a contract, then an eligible session date. Arrow buttons navigate eligible dates within that contract.
-- Choose 1m / 5m / 15m / 30m / 1h / D. D is the selected session's daily candle. Buckets are anchored at the first observed session minute. Scheduled breaks are left empty, and no bars are filled.
+- Choose 1m / 5m / 15m / 30m / 1h / D. D is the selected session's daily candle. Globex buckets are anchored at the first observed session minute; RTH buckets are anchored at 09:30 ET. Scheduled breaks are left empty, and no bars are filled.
 - Pan by dragging, zoom with the wheel or pinch, and hover for OHLC and volume. Toggle Globex/RTH display. Use the indicator manager to set visibility, color, line style, opening-range minutes, and VWAP deviation multipliers.
 - Fullscreen expands the existing chart instance. Drag the chart and sidebar dividers; resize the bottom workspace using its bottom-right corner or divider. Dividers support arrow keys. Analytics and Workspace buttons collapse the panels.
 - Contract, date, timeframe, display mode, layout dimensions, panel visibility, indicator settings, and chart time windows persist locally. Resizing preserves the time window.
@@ -54,7 +54,7 @@ DuckDB queries Parquet with date, contract, availability, and eligibility predic
 
 ## Causality and indicator definitions
 
-Replay requests use a server-side observed-minute cursor. An optional timezone-aware `as_of` additionally filters observations to `bar open + 1 minute <= as_of`. Raw bars are filtered **before** aggregation, statistics, VWAP, and opening-range calculations. A single atomic snapshot supplies the chart, sidebar, and explorer. Stale selection requests are aborted. Replay does not fetch future prices, and crosshair state resets when a session changes or becomes unavailable. Session bounds, minute totals, and retrospective eligibility are metadata, not simulated historical knowledge.
+Replay requests use a server-side observed-minute cursor. An optional timezone-aware `as_of` additionally filters observations to `bar open + 1 minute <= as_of`. Raw bars are filtered **before** aggregation, statistics, VWAP, deviation-band, and opening-range calculations. A single atomic snapshot supplies the chart, sidebar, and explorer. Stale selection requests are aborted. Replay does not fetch future prices, and crosshair state resets when a session changes or becomes unavailable. Session bounds, minute totals, and retrospective eligibility are metadata, not simulated historical knowledge.
 
 VWAP resets at the ordinary session open and uses cumulative `HLC3 × volume / volume`, an OHLCV approximation rather than trade-level VWAP. Aggregated VWAP uses the last known source-minute VWAP. Previous high/low comes only from the manifest's exact prior candidate date on the same selected contract, requiring a complete observed grid with no boundary issue; unavailable context stays null. Prior-session records also respect the cutoff. No context is borrowed across a roll or skipped date.
 
@@ -70,7 +70,7 @@ Interactive schema: **http://127.0.0.1:8000/docs**.
 | `GET /api/contracts` | Contracts with eligible coverage |
 | `GET /api/sessions` | Optional `contract`, `start`, `end`; `limit<=2000`, `offset` |
 | `GET /api/replay-time` | Required `contract`, `session`, `time=HH:MM` ET; returns the observed-minute cursor only |
-| `GET /api/snapshot` | Required `contract`, `session`; optional `timeframe`, `cursor`, `as_of`, `offset`, `limit<=500`, `display=Globex|RTH`, `opening_minutes=1..120`, `deviations=0.25..5` |
+| `GET /api/snapshot` | Required `contract`, `session`; optional `timeframe`, `cursor`, `as_of`, `offset`, `limit<=500`, `display` (`Globex` or `RTH`), `opening_minutes=1..120`, `deviations=0.25..5` |
 | `GET /api/bars` | Required `contract`, inclusive `start`, `end`; at most 31 days apart; optional `timeframe`, `as_of`; separate session arrays |
 | `GET /api/statistics` | Same selection and cutoff parameters as snapshot |
 | `GET /api/indicators` | Same parameters; points carry decision-time availability |
@@ -102,3 +102,5 @@ If Chromium already exists, `PLAYWRIGHT_CHROMIUM_EXECUTABLE=/absolute/path/to/ch
 Tests compare real source rows to API candles, verify causal prefixes and aggregation across all six timeframes, independently recompute VWAP and OR, check exact contract and eligibility rejection, timestamp availability at close, source hash failure, pagination, bounded requests, error recovery, responsive layout, and browser replay controls. Existing research tests remain separate (`python -m pytest tests`). Browser screenshots and traces are ignored generated outputs under `terminal/web/test-results/`.
 
 See [v0.2 implementation and verification](IMPLEMENTATION_V0_2.md) for the delivered changes and test results.
+
+For the broader repository, see the [documentation index](../README.md#start-here), [architecture](../docs/ARCHITECTURE.md), and [development guide](../docs/DEVELOPMENT.md).
