@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef, type CSSProperties } from "react";
 import {
   Activity,
   ArrowLeft,
@@ -21,6 +21,16 @@ import {
   X,
 } from "lucide-react";
 import MarketChart from "./MarketChart";
+import IndicatorManager from "./IndicatorManager";
+import {
+  normalizeWorkspace,
+  defaultWorkspace,
+  defaultIndicators,
+  readLocal,
+  writeLocal,
+  Workspace,
+  Indicators,
+} from "@/lib/workspace";
 import Analytics from "./Analytics";
 import Explorer from "./Explorer";
 import {
@@ -48,12 +58,63 @@ export default function Terminal() {
   const [cursor, setCursor] = useState<number | null>(null),
     [playing, setPlaying] = useState(false),
     [speed, setSpeed] = useState(1);
-  const [vwap, setVwap] = useState(true),
-    [levels, setLevels] = useState(true),
-    [opening, setOpening] = useState(true),
-    [offset, setOffset] = useState(0),
+  const [ready, setReady] = useState(false),
+    [display, setDisplay] = useState<"Globex" | "RTH">("Globex"),
+    [settings, setSettings] = useState<Indicators>(defaultIndicators),
+    [layout, setLayout] = useState(defaultWorkspace),
+    [jump, setJump] = useState(""),
+    [storageWarning, setStorageWarning] = useState("");
+  const chartPanel = useRef<HTMLDivElement>(null);
+  const jumpRequest = useRef<AbortController | null>(null);
+  const vwap = settings.vwap.visible,
+    levels = settings.levels.visible,
+    opening = settings.opening.visible;
+  const setVwap = (visible: boolean) =>
+    setSettings((s) => ({ ...s, vwap: { ...s.vwap, visible } }));
+  const setLevels = (visible: boolean) =>
+    setSettings((s) => ({ ...s, levels: { ...s.levels, visible } }));
+  const setOpening = (visible: boolean) =>
+    setSettings((s) => ({ ...s, opening: { ...s.opening, visible } }));
+  const [offset, setOffset] = useState(0),
     [details, setDetails] = useState(false);
   useEffect(() => {
+    const state = normalizeWorkspace(
+      readLocal<Workspace>("nq:v2:workspace", defaultWorkspace),
+    );
+    setContract(typeof state.contract === "string" ? state.contract : "");
+    setSession(typeof state.session === "string" ? state.session : "");
+    setFrame(
+      frames.includes(state.frame as Frame) ? (state.frame as Frame) : "1m",
+    );
+    setDisplay(state.display === "RTH" ? "RTH" : "Globex");
+    setSettings({ ...defaultIndicators, ...state.indicators });
+    setLayout({
+      ...defaultWorkspace,
+      ...state,
+      width: Math.max(240, Math.min(600, state.width || 290)),
+      height: Math.max(260, Math.min(1000, state.height || 480)),
+      bottom: Math.max(180, Math.min(900, state.bottom || 300)),
+    });
+    setReady(true);
+  }, []);
+  useEffect(() => {
+    if (
+      ready &&
+      !writeLocal("nq:v2:workspace", {
+        ...layout,
+        contract,
+        session,
+        frame,
+        display,
+        indicators: settings,
+      })
+    )
+      setStorageWarning(
+        "Local storage unavailable; settings last for this visit.",
+      );
+  }, [ready, layout, contract, session, frame, display, settings]);
+  useEffect(() => {
+    if (!ready) return;
     const ac = new AbortController();
     setLoading(true);
     setError("");
@@ -77,9 +138,9 @@ export default function Terminal() {
         }
       });
     return () => ac.abort();
-  }, [retry]);
+  }, [retry, ready]);
   useEffect(() => {
-    if (!contract) return;
+    if (!ready || !contract) return;
     const ac = new AbortController();
     setLoading(true);
     setError("");
@@ -104,9 +165,17 @@ export default function Terminal() {
         }
       });
     return () => ac.abort();
-  }, [contract, retry]);
+  }, [contract, retry, ready]);
   useEffect(() => {
-    if (!contract || !session) return;
+    if (
+      !ready ||
+      !contract ||
+      !session ||
+      !sessions.some(
+        (s) => s.trading_date === session && s.contract === contract,
+      )
+    )
+      return;
     const ac = new AbortController();
     setLoading(true);
     setError("");
@@ -115,10 +184,25 @@ export default function Terminal() {
       session,
       timeframe: frame,
       offset: String(offset),
+      display,
+      opening_minutes: String(settings.openingMinutes),
+      deviations: String(settings.deviations),
     });
     if (cursor !== null) q.set("cursor", String(cursor));
     api<Snapshot>(`snapshot?${q}`, ac.signal)
       .then((d) => {
+        if (
+          cursor !== null &&
+          d.explorer.total > 0 &&
+          offset !==
+            Math.floor((d.explorer.total - 1) / d.explorer.limit) *
+              d.explorer.limit
+        ) {
+          setOffset(
+            Math.floor((d.explorer.total - 1) / d.explorer.limit) *
+              d.explorer.limit,
+          );
+        }
         setData(d);
         setLoading(false);
       })
@@ -131,7 +215,19 @@ export default function Terminal() {
         }
       });
     return () => ac.abort();
-  }, [contract, session, frame, cursor, offset, retry]);
+  }, [
+    contract,
+    session,
+    frame,
+    cursor,
+    offset,
+    retry,
+    ready,
+    sessions,
+    display,
+    settings.openingMinutes,
+    settings.deviations,
+  ]);
   useEffect(() => {
     if (!playing || loading || !data || cursor === null) return;
     if (data.cursor >= data.total_minutes) {
@@ -145,6 +241,7 @@ export default function Terminal() {
     return () => clearTimeout(t);
   }, [playing, loading, data, cursor, speed]);
   const reset = () => {
+    jumpRequest.current?.abort();
     setPlaying(false);
     setCursor(null);
     setOffset(0);
@@ -160,10 +257,106 @@ export default function Terminal() {
     setOffset(0);
     setData(null);
   };
+  const fullscreen = () => {
+    if (document.fullscreenElement) void document.exitFullscreen();
+    else void chartPanel.current?.requestFullscreen();
+  };
+  const stepBar = () => {
+    if (loading || !data || cursor === null) return;
+    setPlaying(false);
+    setCursor(
+      Math.min(
+        cursor +
+          { "1m": 1, "5m": 5, "15m": 15, "30m": 30, "1h": 60, daily: 1440 }[
+            frame
+          ],
+        data.total_minutes,
+      ),
+    );
+  };
+  const jumpToTime = async () => {
+    if (cursor === null || !jump) return;
+    setPlaying(false);
+    jumpRequest.current?.abort();
+    const controller = new AbortController();
+    jumpRequest.current = controller;
+    try {
+      const d = await api<{ cursor: number }>(
+        `replay-time?${new URLSearchParams({ contract, session, time: jump })}`,
+        controller.signal,
+      );
+      setData(null);
+      setCursor(d.cursor);
+      setOffset(0);
+    } catch (e) {
+      if (controller.signal.aborted) return;
+      setError((e as Error).message);
+    }
+  };
+  useEffect(() => {
+    const fn = (e: KeyboardEvent) => {
+      if (
+        /INPUT|SELECT|TEXTAREA/.test((e.target as HTMLElement).tagName) ||
+        e.ctrlKey ||
+        e.metaKey ||
+        e.altKey
+      )
+        return;
+      if (e.code === "Space" && cursor !== null) {
+        e.preventDefault();
+        setPlaying((v) => !v);
+      } else if (e.key === "ArrowRight" && cursor !== null) {
+        e.preventDefault();
+        stepBar();
+      } else if (e.key.toLowerCase() === "f") {
+        e.preventDefault();
+        fullscreen();
+      }
+    };
+    document.addEventListener("keydown", fn);
+    return () => document.removeEventListener("keydown", fn);
+  });
+  const resize =
+    (axis: "width" | "height" | "bottom") =>
+    (e: React.PointerEvent<HTMLDivElement>) => {
+      e.preventDefault();
+      const el = e.currentTarget,
+        start = axis === "width" ? e.clientX : e.clientY,
+        base = layout[axis];
+      el.setPointerCapture(e.pointerId);
+      el.onpointermove = (event) => {
+        const delta =
+          (axis === "width" ? event.clientX : event.clientY) - start;
+        setLayout((l) => ({
+          ...l,
+          [axis]: Math.max(
+            axis === "width" ? 240 : 260,
+            Math.min(
+              axis === "width" ? 600 : 1000,
+              base + (axis === "width" ? -delta : delta),
+            ),
+          ),
+        }));
+      };
+      el.onpointerup = () => {
+        el.onpointermove = null;
+      };
+      el.onpointercancel = () => {
+        el.onpointermove = null;
+      };
+    };
   const index = sessions.findIndex((s) => s.trading_date === session);
   const current = sessions[index];
   return (
-    <main className="terminal">
+    <main
+      className="terminal"
+      style={
+        {
+          "--sidebar-width": layout.width + "px",
+          "--chart-height": layout.height + "px",
+        } as CSSProperties
+      }
+    >
       <nav className="rail" aria-label="Terminal navigation">
         <div className="brand-mark">
           <Activity size={24} />
@@ -194,7 +387,7 @@ export default function Terminal() {
           <ShieldCheck size={20} />
         </button>
         <div className="rail-bottom">
-          <span>v0.1</span>
+          <span>v0.2</span>
           <button
             onClick={() => setDetails(true)}
             aria-label="Data configuration"
@@ -213,7 +406,7 @@ export default function Terminal() {
           <div className="top-status">
             <span className="status-dot" />
             LOCAL DATA <i /> <span>HISTORICAL</span>
-            <span className="version">v0.1.0</span>
+            <span className="version">v0.2.0</span>
           </div>
         </header>
         <div className="breadcrumb">
@@ -240,9 +433,13 @@ export default function Terminal() {
             <ChevronDown size={12} />
           </button>
         </div>
-        <div className="market-layout">
+        <div
+          className={
+            "market-layout " + (!layout.analytics ? "analytics-collapsed" : "")
+          }
+        >
           <section className="market-main">
-            <div className="chart-panel">
+            <div className="chart-panel" ref={chartPanel}>
               <div className="chart-toolbar">
                 <div className="instrument">
                   <div className="instrument-icon">NQ</div>
@@ -308,6 +505,18 @@ export default function Terminal() {
                 </div>
               </div>
               <div className="chart-options">
+                <select
+                  aria-label="Session display"
+                  value={display}
+                  onChange={(e) => {
+                    setData(null);
+                    setDisplay(e.target.value as "Globex" | "RTH");
+                    setOffset(0);
+                  }}
+                >
+                  <option>Globex</option>
+                  <option>RTH</option>
+                </select>
                 <div className="timeframes" aria-label="Chart timeframe">
                   {frames.map((f) => (
                     <button
@@ -346,7 +555,7 @@ export default function Terminal() {
                     onClick={() => setOpening(!opening)}
                   >
                     <span className="dot blue" />
-                    OR 30m
+                    OR {settings.openingMinutes}m
                   </button>
                 </div>
                 <button
@@ -357,12 +566,43 @@ export default function Terminal() {
                   <Focus size={15} />
                 </button>
               </div>
+              <div className="workspace-actions">
+                <button aria-label="Chart fullscreen" onClick={fullscreen}>
+                  ⛶ Fullscreen
+                </button>
+                <button
+                  aria-expanded={layout.analytics}
+                  onClick={() =>
+                    setLayout((l) => ({ ...l, analytics: !l.analytics }))
+                  }
+                >
+                  Analytics
+                </button>
+                <button
+                  aria-expanded={layout.explorer}
+                  onClick={() =>
+                    setLayout((l) => ({ ...l, explorer: !l.explorer }))
+                  }
+                >
+                  Workspace
+                </button>
+                <details className="shortcuts">
+                  <summary>Shortcuts</summary>
+                  <span>
+                    Space: play/pause · →: bar · F: fullscreen · Esc: cancel ·
+                    Delete: drawing
+                  </span>
+                </details>
+                <span>{storageWarning}</span>
+              </div>
               <div className="chart-stage">
                 <MarketChart
                   data={data}
                   vwap={vwap}
                   levels={levels}
                   opening={opening}
+                  settings={settings}
+                  replay={cursor !== null}
                 />
                 {loading && (
                   <div
@@ -444,12 +684,30 @@ export default function Terminal() {
                       >
                         <SkipForward size={14} />
                       </button>
+                      <button
+                        aria-label="Step forward one bar"
+                        disabled={
+                          loading || !data || data.cursor >= data.total_minutes
+                        }
+                        onClick={stepBar}
+                      >
+                        Bar →
+                      </button>
+                      <input
+                        type="time"
+                        aria-label="Jump to session time"
+                        value={jump}
+                        onChange={(e) => setJump(e.target.value)}
+                      />
+                      <button disabled={loading || !jump} onClick={jumpToTime}>
+                        Jump
+                      </button>
                       <select
                         aria-label="Replay speed"
                         value={speed}
                         onChange={(e) => setSpeed(Number(e.target.value))}
                       >
-                        {[1, 2, 4, 8].map((n) => (
+                        {[1, 2, 5, 10].map((n) => (
                           <option key={n} value={n}>
                             {n}×
                           </option>
@@ -488,9 +746,88 @@ export default function Terminal() {
                 </div>
               </div>
             </div>
-            <Explorer data={data} offset={offset} setOffset={setOffset} />
+            <div
+              role="separator"
+              aria-label="Resize chart"
+              aria-orientation="horizontal"
+              tabIndex={0}
+              className="resize-chart"
+              onPointerDown={resize("height")}
+              onKeyDown={(e) => {
+                if (["ArrowUp", "ArrowDown"].includes(e.key)) {
+                  e.preventDefault();
+                  setLayout((l) => ({
+                    ...l,
+                    height: Math.max(
+                      260,
+                      Math.min(
+                        1000,
+                        l.height + (e.key === "ArrowDown" ? 20 : -20),
+                      ),
+                    ),
+                  }));
+                }
+              }}
+            />
+            <div
+              className="bottom-workspace"
+              hidden={!layout.explorer}
+              style={{ height: layout.bottom }}
+              onPointerUp={(e) => {
+                const bottom = e.currentTarget.getBoundingClientRect().height;
+                setLayout((l) => ({ ...l, bottom }));
+              }}
+            >
+              <Explorer data={data} offset={offset} setOffset={setOffset} />
+            </div>
+            <div
+              role="separator"
+              aria-label="Resize workspace"
+              aria-orientation="horizontal"
+              tabIndex={0}
+              className="resize-chart"
+              onPointerDown={resize("bottom")}
+              onKeyDown={(e) => {
+                if (["ArrowUp", "ArrowDown"].includes(e.key)) {
+                  e.preventDefault();
+                  setLayout((l) => ({
+                    ...l,
+                    bottom: Math.max(
+                      180,
+                      Math.min(
+                        900,
+                        l.bottom + (e.key === "ArrowDown" ? 20 : -20),
+                      ),
+                    ),
+                  }));
+                }
+              }}
+            />
           </section>
-          <Analytics data={data} provenance={provenance} />
+          <div
+            role="separator"
+            aria-label="Resize analytics"
+            aria-orientation="vertical"
+            tabIndex={0}
+            className="resize-analytics"
+            onPointerDown={resize("width")}
+            onKeyDown={(e) => {
+              if (["ArrowLeft", "ArrowRight"].includes(e.key)) {
+                e.preventDefault();
+                setLayout((l) => ({
+                  ...l,
+                  width: Math.max(
+                    240,
+                    Math.min(600, l.width + (e.key === "ArrowLeft" ? 20 : -20)),
+                  ),
+                }));
+              }
+            }}
+          />
+          <div className="analytics-container" hidden={!layout.analytics}>
+            <IndicatorManager value={settings} onChange={setSettings} />
+            <Analytics data={data} provenance={provenance} />
+          </div>
         </div>
         <footer className="statusbar">
           <span>
@@ -567,7 +904,7 @@ export default function Terminal() {
               <li>
                 VWAP uses HLC3 and bar volume. Opening range is 09:30–10:00 ET.
               </li>
-              <li>No volume profile is estimated in v0.1.</li>
+              <li>No volume profile is estimated in v0.2.</li>
             </ul>
             <h4>Fixed roll policy</h4>
             <p>{provenance?.summary.policy.selection}</p>

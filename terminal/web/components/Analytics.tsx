@@ -89,7 +89,14 @@ export default function Analytics({
           OPENING RANGE{" "}
           <span>{s?.or_complete ? "COMPLETE" : "DEVELOPING"}</span>
         </h3>
-        <p className="method">09:30–10:00 America/New_York</p>
+        <p className="method">
+          09:30–
+          {String(
+            9 + Math.floor((30 + (data?.opening_minutes || 30)) / 60),
+          ).padStart(2, "0")}
+          :{String((30 + (data?.opening_minutes || 30)) % 60).padStart(2, "0")}{" "}
+          America/New_York
+        </p>
         {metric("OR high", s?.or_high)}
         {metric("OR low", s?.or_low)}
         {metric("OR width", s?.or_range, "pts")}

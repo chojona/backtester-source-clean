@@ -63,7 +63,7 @@ export default function Explorer({
           <LockKeyhole size={24} />
           <h3>{tab}</h3>
           <p>
-            Inactive in v0.1. No {tab.toLowerCase()} functionality is connected.
+            Inactive in v0.2. No {tab.toLowerCase()} functionality is connected.
           </p>
           <button onClick={() => setTab("Data Explorer")}>
             Return to Data Explorer

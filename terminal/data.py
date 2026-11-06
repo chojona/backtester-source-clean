@@ -81,7 +81,10 @@ class ResearchStore:
            str(end) if end else None, str(end) if end else None, limit, offset])
 
     def snapshot(self, contract: str, session: date, timeframe: str = '1m', cursor: int | None = None,
-                 as_of: datetime | None = None, offset: int = 0, limit: int = 50):
+                 as_of: datetime | None = None, offset: int = 0, limit: int = 50,
+                 display: str = 'Globex', opening_minutes: int = 30, deviations: float = 1):
+        if display not in ('Globex', 'RTH') or not 1 <= opening_minutes <= 120 or not 0.25 <= deviations <= 5:
+            raise DataError('Invalid display or indicator parameters')
         if timeframe not in FRAMES:
             raise DataError('Unsupported timeframe')
         if as_of is not None and (as_of.tzinfo is None or as_of.utcoffset() is None):
@@ -117,11 +120,28 @@ class ResearchStore:
         previous = ({'high': previous['high'], 'low': previous['low'], 'date': meta[0]['prior_candidate_date']}
                     if previous_meta and previous['n'] == previous_meta[0]['ordinary_candidate_minutes']
                     else {'high': None, 'low': None, 'date': None})
-        pv = vol = rv = 0.0
+        observed_cursor = len(rows)
+        rth_start = datetime.combine(session, datetime.min.time(), ET).replace(hour=9, minute=30)
+        rth_end = rth_start.replace(hour=16, minute=0)
+        opening_end = rth_start + timedelta(minutes=opening_minutes)
+        if display == 'RTH':
+            rows = [r for r in rows if rth_start <= r['timestamp_utc'] < rth_end]
+            if previous['date'] is not None:
+                prior_day = date.fromisoformat(str(previous['date']))
+                prior_open = datetime.combine(prior_day, datetime.min.time(), ET).replace(hour=9, minute=30)
+                prior_close = prior_open.replace(hour=16, minute=0)
+                levels = self.query('''SELECT min(low) AS low, max(high) AS high FROM context
+                    WHERE trading_date=? AND contract=? AND selected_contract=?
+                    AND full_grid_observed IS TRUE AND boundary_unresolved IS FALSE
+                    AND CAST(timestamp_utc AS TIMESTAMPTZ)>=? AND CAST(timestamp_utc AS TIMESTAMPTZ)<?
+                    AND CAST(timestamp_utc AS TIMESTAMPTZ) + INTERVAL 1 MINUTE<=?''',
+                    [str(previous['date']), contract, contract, prior_open, prior_close, cutoff])[0]
+                previous.update(high=levels['high'], low=levels['low'])
+        pv = vol = rv = mean = m2 = 0.0
         or_high = or_low = None
         buckets = {}
         prior = None
-        anchor = int(bounds['start'].timestamp())
+        anchor = int((rth_start if display == 'RTH' else bounds['start']).timestamp())
         span = FRAMES[timeframe] * 60
         for r in rows:
             stamp = r['timestamp_utc']
@@ -129,10 +149,16 @@ class ResearchStore:
             if prior and (stamp - prior['timestamp_utc']).total_seconds() == 60:
                 rv += math.log(r['close'] / prior['close']) ** 2
             prior = r
-            pv += ((r['high'] + r['low'] + r['close']) / 3) * r['volume']
-            vol += r['volume']
+            typical = (r['high'] + r['low'] + r['close']) / 3
+            pv += typical * r['volume']
+            next_volume = vol + r['volume']
+            if r['volume'] > 0:
+                delta = typical - mean
+                mean += r['volume'] / next_volume * delta
+                m2 += r['volume'] * delta * (typical - mean)
+            vol = next_volume
             local = stamp.astimezone(ET)
-            if local.date() == session and (9, 30) <= (local.hour, local.minute) < (10, 0):
+            if rth_start <= stamp < opening_end:
                 or_high = max(or_high, r['high']) if or_high is not None else r['high']
                 or_low = min(or_low, r['low']) if or_low is not None else r['low']
             bucket = anchor + ((t - anchor) // span) * span
@@ -143,26 +169,50 @@ class ResearchStore:
             b.update(high=max(b['high'], r['high']), low=min(b['low'], r['low']), close=r['close'],
                      volume=b['volume'] + r['volume'], source_count=b['source_count'] + 1,
                      vwap=pv / vol if vol else None, or_high=or_high, or_low=or_low,
+                     vwap_upper=mean + deviations * math.sqrt(max(0, m2/vol)) if vol else None,
+                     vwap_lower=mean - deviations * math.sqrt(max(0, m2/vol)) if vol else None,
                      available_at=t + 60)
         candles = list(buckets.values())
         for b in candles:
             # A final short session bucket is complete when the session is fully observed.
-            b['partial'] = b['time'] + span > cutoff.timestamp() and len(rows) < total
+            b['partial'] = b['time'] + span > cutoff.timestamp() and observed_cursor < total
         stats = {'open': rows[0]['open'] if rows else None,
                  'high': max((r['high'] for r in rows), default=None),
                  'low': min((r['low'] for r in rows), default=None),
                  'close': rows[-1]['close'] if rows else None,
                  'volume': int(vol), 'vwap': pv / vol if vol else None,
                  'realized_volatility': math.sqrt(rv) * 100, 'or_high': or_high, 'or_low': or_low,
-                 'or_complete': cutoff.astimezone(ET) >= datetime.combine(session, datetime.min.time(), ET).replace(hour=10),
+                 'or_complete': cutoff >= opening_end,
                  'or_range': or_high - or_low if or_high is not None else None}
         stats['range'] = stats['high'] - stats['low'] if rows else None
         stats['vwap_deviation'] = stats['close'] - stats['vwap'] if rows and vol else None
         return {'contract': contract, 'session': session.isoformat(), 'timeframe': timeframe,
-                'cursor': len(rows), 'total_minutes': total, 'as_of': cutoff.isoformat(),
+                'cursor': observed_cursor, 'total_minutes': total, 'as_of': cutoff.isoformat(),
                 'session_start': bounds['start'].isoformat(), 'session_end': (bounds['last'] + timedelta(minutes=1)).isoformat(),
                 'bars': candles, 'stats': stats, 'previous': previous,
+                'display': display, 'opening_minutes': opening_minutes, 'deviations': deviations,
+                'boundaries': [int(bounds['start'].timestamp()), int(rth_start.timestamp()), int(rth_end.timestamp())],
                 'explorer': {'rows': candles[offset:offset + limit], 'total': len(candles), 'offset': offset, 'limit': limit},
                 'eligibility': {'eligible_full_session': True, 'strict_eligible': False,
                                 'calendar_status': meta[0]['calendar_status'], 'roll': meta[0]['roll'],
                                 'warmup_14_ready': meta[0]['warmup_14_ready']}}
+
+    def cursor_at(self, contract: str, session: date, clock: str):
+        # Validate identity through the same eligibility and manifest reconciliation path.
+        meta = self.snapshot(contract, session, cursor=0)
+        try:
+            parsed = datetime.strptime(clock, '%H:%M').time()
+        except ValueError as exc:
+            raise DataError('Time must be HH:MM in America/New_York') from exc
+        target = datetime.combine(session, parsed, ET)
+        start = datetime.fromisoformat(meta['session_start'])
+        if target < start:
+            target += timedelta(days=1)
+        if parsed.hour >= start.astimezone(ET).hour:
+            target = datetime.combine(start.astimezone(ET).date(), parsed, ET)
+        if not start <= target <= datetime.fromisoformat(meta['session_end']):
+            raise DataError('Time outside selected session')
+        return self.query('''SELECT count(*) AS n FROM bars WHERE trading_date=? AND contract=?
+          AND selected_contract=? AND eligible_full_session IS TRUE
+          AND CAST(timestamp_utc AS TIMESTAMPTZ) + INTERVAL 1 MINUTE <= ?''',
+          [session.isoformat(), contract, contract, target])[0]['n']

@@ -10,6 +10,8 @@ export type Bar = {
   vwap: number | null;
   or_high: number | null;
   or_low: number | null;
+  vwap_upper: number | null;
+  vwap_lower: number | null;
   available_at: number;
   partial: boolean;
 };
@@ -33,6 +35,10 @@ export type Snapshot = {
   contract: string;
   session: string;
   timeframe: Frame;
+  display: "Globex" | "RTH";
+  boundaries: number[];
+  opening_minutes: number;
+  deviations: number;
   cursor: number;
   total_minutes: number;
   as_of: string;
