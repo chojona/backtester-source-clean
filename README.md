@@ -23,3 +23,7 @@ python -m backtester validate-data data/synthetic_NQ_1m.csv --symbol NQ --interv
 The generator uses formulas, not observed market records. Its output stays in ignored local folders. Tests use invented values solely to check software behavior.
 
 Never add market records, provider responses, research outputs, credentials, or private evidence to this repository. Provider access requires separately obtained credentials and appropriate data rights.
+
+## Local NQ research terminal
+
+The [terminal setup guide](terminal/README.md) covers the Next.js/FastAPI application, real v2.0.0 dataset binding, causal historical replay, API, and tests. Historical data stays in its existing licensed location; this source export includes no market records.
