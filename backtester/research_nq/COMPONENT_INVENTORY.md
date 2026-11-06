@@ -21,12 +21,15 @@
 | Archival PIT schemas | `docs/nq-archival-pit-v1/` | Certification-class schemas; exploratory schema is separate |
 | Prospective capture spool | `backtester/prospective/` | Live-adjacent; not authorized for M1 |
 
-## New M1 surface
+## New M1 / M1-R surface
 
 | Component | Path |
 |---|---|
 | Package | `backtester/research_nq/` |
 | Classifications | `classifications.py` |
 | Manifest + schema | `manifest.py`, `schema.py` |
+| Cryptographic binding | `binding.py`, `BINDING.md` |
 | Read-only adapter | `adapter.py` |
+| M1-R handoff / verification | `M1R_HANDOFF.md`, `M1R_VERIFICATION.md` |
+| Synthetic test support | `testing_support.py` |
 | Tests | `tests/test_research_nq_*.py` |
