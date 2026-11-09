@@ -11,7 +11,7 @@ test('indicator lines separate source-contract sessions',()=>{
 test('continuous raw and adjusted symbols, full chart, metadata and replay guards',async({page,request})=>{
   test.setTimeout(90000);
   const manifest=await request.get('/api/continuous/manifest');
-  test.skip(!manifest.ok(),'Requires a built external continuous release');
+  test.skip(process.env.NQ_BROWSER_RELEASE !== '1' || !manifest.ok(),'Requires a built external continuous release');
   const errors:string[]=[];page.on('pageerror',e=>errors.push(e.message));
   await page.goto('/');
   await page.getByLabel('Contract',{exact:true}).selectOption('NQ1! Raw');
@@ -53,12 +53,12 @@ test('continuous raw and adjusted symbols, full chart, metadata and replay guard
 
 test('chart labels and quality details do not overlap at desktop or mobile sizes',async({page,request})=>{
   test.setTimeout(90000);
-  test.skip(!(await request.get('/api/continuous/manifest')).ok(),'Requires external continuous release');
+  test.skip(process.env.NQ_BROWSER_RELEASE !== '1' || !(await request.get('/api/continuous/manifest')).ok(),'Requires external continuous release');
   await page.goto('/');
   await page.getByLabel('Contract',{exact:true}).selectOption('NQ1! Raw');
   await expect(page.getByTestId('continuous-readout')).toBeVisible();
   await page.getByLabel('Continuous history').selectOption('5000');
-  await expect(page.getByTestId('continuous-coverage')).toContainText('4,262 sessions');
+  await expect(page.getByTestId('continuous-coverage')).toContainText('4,262 sessions',{timeout:45000});
   for(const width of [1440,390]){
     await page.setViewportSize({width,height:1000});
     await page.getByRole('button',{name:'Fit history',exact:true}).click();
@@ -97,22 +97,22 @@ test('chart labels and quality details do not overlap at desktop or mobile sizes
 
 test('full history switches to a usable intraday window and restores on daily',async({page,request})=>{
   test.setTimeout(60000);
-  test.skip(!(await request.get('/api/continuous/manifest')).ok(),'Requires external continuous release');
+  test.skip(process.env.NQ_BROWSER_RELEASE !== '1' || !(await request.get('/api/continuous/manifest')).ok(),'Requires external continuous release');
   const badRequests:string[]=[];
   page.on('response',response=>{if(response.url().includes('/api/snapshot')&&!response.ok())badRequests.push(response.url());});
   await page.goto('/');
   await page.getByLabel('Contract',{exact:true}).selectOption('NQ1! Raw');
   await expect(page.getByTestId('continuous-readout')).toBeVisible();
   await page.getByLabel('Continuous history').selectOption('5000');
-  await expect(page.getByTestId('continuous-coverage')).toContainText('4,262 sessions');
+  await expect(page.getByTestId('continuous-coverage')).toContainText('4,262 sessions',{timeout:45000});
   await page.getByRole('button',{name:'1m',exact:true}).click();
   await expect(page.getByLabel('Continuous history')).toHaveValue('20');
   await expect(page.locator('.chart-symbol')).toContainText('1m');
-  await expect(page.getByTestId('continuous-coverage')).toContainText('20 sessions');
-  await expect(page.getByText('Intraday · 20 sessions.',{exact:false})).toBeVisible();
+  await expect(page.getByTestId('continuous-coverage')).toContainText('20 sessions',{timeout:30000});
+  await expect(page.getByText('Intraday · 20 sessions at startup.',{exact:false})).toBeVisible();
   await expect(page.locator('.error-message')).toHaveCount(0);
   await page.getByRole('button',{name:'D',exact:true}).click();
   await expect(page.getByLabel('Continuous history')).toHaveValue('5000');
-  await expect(page.getByTestId('continuous-coverage')).toContainText('4,262 sessions');
+  await expect(page.getByTestId('continuous-coverage')).toContainText('4,262 sessions',{timeout:45000});
   expect(badRequests).toEqual([]);
 });

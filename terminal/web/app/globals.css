@@ -1583,12 +1583,17 @@ tbody tr:hover {
 .chart-wrap {
   height: var(--chart-height, 480px);
 }
-.chart-panel:fullscreen {
+.chart-panel.workspace-fullscreen {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+}
+.chart-panel:fullscreen, .chart-panel.workspace-fullscreen {
   border: 0;
   overflow: auto;
   background: #0c1119;
 }
-.chart-panel:fullscreen .chart-wrap {
+.chart-panel:fullscreen .chart-wrap, .chart-panel.workspace-fullscreen .chart-wrap {
   height: calc(100vh - 245px);
 }
 .workspace-actions {

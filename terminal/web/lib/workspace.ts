@@ -22,6 +22,8 @@ export type Workspace = {
   bottom: number;
   analytics: boolean;
   explorer: boolean;
+  fullscreen: boolean;
+  historySessions: number;
   indicators: Indicators;
 };
 export const defaultWorkspace: Workspace = {
@@ -34,6 +36,8 @@ export const defaultWorkspace: Workspace = {
   bottom: 300,
   analytics: true,
   explorer: true,
+  fullscreen: false,
+  historySessions: 20,
   indicators: defaultIndicators,
 };
 export function readLocal<T>(key: string, fallback: T): T {
@@ -63,6 +67,7 @@ export type Drawing = {
     | "range";
   points: [Anchor, Anchor];
   createdAt: number;
+  adjustmentBlock?: number;
   visible: boolean;
   color: string;
 };
@@ -81,9 +86,11 @@ export function validDrawing(d: Drawing) {
     Array.isArray(d.points) &&
     d.points.length === 2 &&
     d.points.every(
-      (p) => p && Number.isFinite(p.time) && Number.isFinite(p.price),
+      (p) => p && Number.isFinite(p.time) && Math.abs(p.time) <= 8.64e12 && Number.isFinite(p.price),
     ) &&
-    Number.isFinite(d.createdAt)
+    Number.isFinite(d.createdAt) && typeof d.visible === "boolean" &&
+    typeof d.color === "string" && /^#[\da-f]{6}$/i.test(d.color) &&
+    (d.adjustmentBlock === undefined || Number.isInteger(d.adjustmentBlock))
   );
 }
 export function visibleDrawings(drawings: Drawing[], asOf: number) {
@@ -156,6 +163,41 @@ export function normalizeWorkspace(input: unknown): Workspace {
     bottom: number(raw.bottom, 300, 180, 900),
     analytics: typeof raw.analytics === "boolean" ? raw.analytics : true,
     explorer: typeof raw.explorer === "boolean" ? raw.explorer : true,
+    fullscreen: raw.fullscreen === true,
+    historySessions: [1, 20, 120, 5000].includes(raw.historySessions ?? 0) ? raw.historySessions! : 20,
     indicators,
   };
+}
+
+export function readWorkspace() {
+  const saved = readLocal<{ version: number; workspace: unknown } | null>("nq:v3:workspace", null);
+  return normalizeWorkspace(saved?.version === 3 ? saved.workspace : readLocal("nq:v2:workspace", null));
+}
+
+export function writeWorkspace(workspace: Workspace) {
+  return writeLocal("nq:v3:workspace", { version: 3, workspace });
+}
+
+export function readDrawings(key: string, legacyPrefix: string | null, display: string): Drawing[] {
+  const stored = readLocal<{ version: number; drawings: unknown } | null>(key, null);
+  if (stored?.version === 3)
+    return Array.isArray(stored.drawings) ? stored.drawings.filter(validDrawing) : [];
+  if (!legacyPrefix) return [];
+  try {
+    const drawings = new Map<string, Drawing>();
+    for (const name of Object.keys(localStorage)) {
+      if (!name.startsWith(legacyPrefix) || !name.endsWith(":" + display)) continue;
+      const old = readLocal<Drawing[]>(name, []);
+      if (Array.isArray(old)) for (const drawing of old.filter(validDrawing)) drawings.set(drawing.id, drawing);
+    }
+    const migrated = [...drawings.values()];
+    if (migrated.length) writeDrawings(key, migrated);
+    return migrated;
+  } catch {
+    return [];
+  }
+}
+
+export function writeDrawings(key: string, drawings: Drawing[]) {
+  return writeLocal(key, { version: 3, drawings });
 }

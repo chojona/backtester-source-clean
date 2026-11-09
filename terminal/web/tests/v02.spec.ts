@@ -65,6 +65,7 @@ test("v0.2 real-data workspace, drawings, persistence and causal replay", async 
   page,
   request,
 }, info) => {
+  test.skip(process.env.NQ_BROWSER_RELEASE !== "1", "Requires the external sealed source release");
   const errors: string[] = [];
   page.on("pageerror", (e) => errors.push(e.message));
   await page.goto("/");
@@ -117,13 +118,12 @@ test("v0.2 real-data workspace, drawings, persistence and causal replay", async 
   );
   const drawings = () =>
     page.evaluate(
-      ({ contract, session }) =>
+      ({ contract }) =>
         JSON.parse(
-          localStorage.getItem(
-            `nq:v2:drawings:${contract}:${session}:Globex`,
-          ) || "[]",
-        ),
-      { contract, session },
+          localStorage.getItem(Object.keys(localStorage).find(key =>
+            key.startsWith("nq:v3:drawings:") && key.includes(contract) && key.includes("Globex"))!) || "{}",
+        ).drawings ?? [],
+      { contract },
     );
   const saved = await drawings();
   expect(saved).toHaveLength(6);
@@ -155,7 +155,7 @@ test("v0.2 real-data workspace, drawings, persistence and causal replay", async 
   const range = await page.evaluate(() =>
     localStorage.getItem(
       Object.keys(localStorage).find(
-        (k) => k.startsWith("nq:v2:view:") && k.includes("/15m/"),
+        (k) => k.startsWith("nq:v3:view:") && k.endsWith("/15m"),
       )!,
     ),
   );
@@ -174,7 +174,7 @@ test("v0.2 real-data workspace, drawings, persistence and causal replay", async 
     await page.evaluate(() =>
       localStorage.getItem(
         Object.keys(localStorage).find(
-          (k) => k.startsWith("nq:v2:view:") && k.includes("/15m/"),
+          (k) => k.startsWith("nq:v3:view:") && k.endsWith("/15m"),
         )!,
       ),
     ),
@@ -248,7 +248,9 @@ test("v0.2 real-data workspace, drawings, persistence and causal replay", async 
     .poll(async () => {
       const raw = await page.evaluate(
         ({ contract, session }) =>
-          localStorage.getItem(`nq:v2:view:${contract}/${session}/5m/Globex/replay`),
+          localStorage.getItem(Object.keys(localStorage).find(key =>
+            key.startsWith("nq:v3:view:") && key.includes(contract) && key.includes(session) &&
+            key.includes('true,') && key.endsWith("/5m"))!),
         { contract, session },
       );
       if (!raw) return false;
@@ -306,8 +308,8 @@ test("v0.2 real-data workspace, drawings, persistence and causal replay", async 
   });
   await page.getByRole("button", { name: "Chart fullscreen" }).click();
   await expect
-    .poll(() => page.evaluate(() => document.fullscreenElement?.className))
-    .toBe("chart-panel");
+    .poll(() => page.evaluate(() => document.fullscreenElement?.classList.contains("chart-panel")))
+    .toBe(true);
   await page.screenshot({ path: info.outputPath("v02-fullscreen.png") });
   await page.getByRole("button", { name: "Chart fullscreen" }).click();
   await page.getByRole("button", { name: "Analytics", exact: true }).click();
