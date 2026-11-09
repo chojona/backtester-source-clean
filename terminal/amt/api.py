@@ -92,3 +92,23 @@ def profile(request: Annotated[ProfileRequest, Query()], db=Depends(store)):
         return dict(envelope, profile=make_profile(bars, request.method, request.row_ticks,
                     Fraction(str(request.value_fraction)), request.smooth_radius, request.prominence,
                     request.sensitivity))
+
+
+class TpoRequest(Request):
+    row_ticks: int = Query(1, ge=1, le=64)
+    period_minutes: int = Query(30, ge=5, le=120)
+    ib_minutes: int = Query(60, ge=1, le=120)
+    value_fraction: float = Query(.70, gt=0, le=1)
+    representation: Literal['none', 'blocks', 'letters'] = 'none'
+
+
+@router.get('/tpo')
+def tpo(request: Annotated[TpoRequest, Query()], db=Depends(store)):
+    from .tpo import make_tpo
+
+    options = request.model_dump(exclude=set(Request.model_fields))
+    with reading(db, request) as source:
+        samples, envelope = load_scope(source, request, options)
+        return dict(envelope, tpo=make_tpo(samples, envelope['cutoff']['as_of'], request.display,
+                    request.row_ticks, request.period_minutes, Fraction(str(request.value_fraction)),
+                    request.representation, request.ib_minutes))
