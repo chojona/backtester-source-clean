@@ -81,7 +81,10 @@ class ObservationSource:
             return None
         rows = self.metadata(session, session)
         previous = rows[0]['prior_candidate_date'] if rows else None
-        return date.fromisoformat(previous) if previous else None
+        prior = date.fromisoformat(previous) if previous else None
+        if prior is not None and prior >= session:
+            raise DataError('AMT prior candidate must precede the selected trading date')
+        return prior
 
     def gaps(self, first, last, cutoff):
         if not self.continuous or first > last:
@@ -212,6 +215,8 @@ class ObservationSource:
             'coverage': {'sessions': [dict(sample.coverage, lineage=sample.lineage) for sample in samples],
                          'contributing_sessions': [sample.day.isoformat() for sample in samples if sample.bars],
                          'observed_minutes': sum(len(sample.bars) for sample in samples),
+                         'status': ('no_declared_sessions' if not samples else 'observed'
+                                    if any(sample.bars for sample in samples) else 'no_admitted_observations'),
                          'all_declared_sessions_complete': bool(samples) and all(s.coverage['complete'] for s in samples),
                          'quality': self.gaps(first, min(last, trading_date(cutoff)), cutoff)},
         }

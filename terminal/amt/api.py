@@ -153,3 +153,76 @@ def vwap(request: Annotated[VwapRequest, Query()], db=Depends(store)):
             samples, envelope = load_scope(source, request, options)
         return dict(envelope, vwap=make_vwap(samples, anchor, envelope['cutoff']['as_of'],
                                             request.deviations, points_from))
+
+
+class ContextRequest(Request):
+    method: Literal['hlc3', 'uniform'] = 'hlc3'
+    row_ticks: int = Query(1, ge=1, le=64)
+    value_fraction: float = Query(.70, gt=0, le=1)
+    ib_minutes: int = Query(60, ge=1, le=120)
+
+
+def previous_value(source, first, scope, cutoff, coordinate, options, fraction):
+    from .profile import value_area, weights
+
+    if scope in ('week', 'prior_week', 'month', 'prior_month'):
+        kind = 'prior_week' if 'week' in scope else 'prior_month'
+        start, end = scope_dates(kind, first, None, None)
+    else:
+        kind = 'prior_session'
+        start = end = source.prior(first)
+        if start is None:
+            return {'status': 'no_prior_candidate', 'value': None}
+    if coordinate is None:
+        return {'status': 'current_coordinate_unavailable', 'value': None}
+    prior_cutoff = min(cutoff, session_bounds(end, source.display)[1])
+    samples = source.load(start, end, prior_cutoff)
+    # An incomplete or foreign prior is reported without publishing its price levels.
+    if not samples or not all(s.coverage['complete'] for s in samples):
+        return {'status': 'prior_incomplete_or_excluded', 'value': None, 'start': start, 'end': end}
+    try:
+        compatible = source.coordinate(samples) == coordinate
+    except DataError:
+        compatible = False
+    if not compatible:
+        return {'status': 'incompatible_price_coordinate', 'value': None, 'start': start, 'end': end}
+    prior = source.envelope(kind, start, end, prior_cutoff, samples, options)
+    rows = weights((bar for sample in samples for bar in sample.bars), options['method'], options['row_ticks'])
+    value = value_area(rows, options['row_ticks'], fraction)
+    return dict(prior, status='available' if value else 'zero_volume', value=value)
+
+
+@router.get('/context')
+def context(request: Annotated[ContextRequest, Query()], db=Depends(store)):
+    from .context import profile_context
+    from .profile import value_area, weights
+
+    options = request.model_dump(exclude=set(Request.model_fields))
+    fraction = Fraction(str(request.value_fraction))
+    with reading(db, request) as source:
+        samples, envelope = load_scope(source, request, options)
+        cutoff = envelope['cutoff']['as_of']
+        rows = weights((bar for sample in samples for bar in sample.bars), request.method, request.row_ticks)
+        area = value_area(rows, request.row_ticks, fraction)
+        previous = previous_value(source, envelope['start'], request.scope, cutoff,
+                                  envelope['source']['coordinate'], options, fraction)
+        return dict(envelope, classification=f'ohlcv_{request.method}_auction_context_estimate',
+                    previous=previous, context=profile_context(samples, cutoff, area,
+                                                                previous['value'], request.ib_minutes))
+
+
+@router.get('/capabilities')
+def capabilities():
+    from .model import MAX_OBSERVATIONS, MAX_PRICE_ROWS, TICK_SIZE, VERSION
+    from .profile import METHODS, VOLUME_SCALE
+
+    return {'methodology_version': VERSION, 'input': 'sealed one-minute NQ OHLCV',
+            'tick_size': TICK_SIZE, 'volume_scale': VOLUME_SCALE,
+            'profile_methods': METHODS, 'tpo_classification': 'ohlcv_bar_range_tpo_estimate',
+            'vwap_classification': 'ohlcv_hlc3_weighted_vwap_estimate',
+            'scopes': ['session', 'prior_session', 'range', 'week', 'prior_week', 'month', 'prior_month'],
+            'vwap_scopes': ['session', 'manual', 'week', 'prior_week', 'month', 'prior_month'],
+            'limits': {'calendar_days': 31, 'observations': MAX_OBSERVATIONS, 'price_rows': MAX_PRICE_ROWS},
+            'replay': {'exact': True, 'raw': True, 'adjusted': False, 'basis': 'observation_close',
+                       'historical_publication_verified': False, 'retrospective_eligibility': True},
+            'trade_exact': False, 'strict_eligible': False, 'execution_eligible': False}
