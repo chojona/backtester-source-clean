@@ -1,6 +1,12 @@
-# NQ Quant Research Terminal v0.2
+# NQ Quant Research Terminal v0.3
+
+Strategy Research now supports fixed VWAP events, immutable experiment artifacts, comparison, causal overlays and replay-safe result inspection. Historical execution remains blocked by the existing strict certification gates. See [v0.3 implementation and validation](IMPLEMENTATION_V03.md) for scientific definitions, limitations and the explicit synthetic software demo.
 
 Local Next.js / TypeScript / Tailwind / Lightweight Charts frontend, backed by a read-only FastAPI / DuckDB service. Uses the existing sealed **nq-ohlcv-research-v2.0.0** release. No market data is bundled, fabricated, copied into source, or downloaded. Research and strict certification rules are unchanged.
+
+## Continuous NQ futures
+
+The symbol selector now supports **NQ1! Raw** and **NQ1! Adjusted** when `NQ_CONTINUOUS_ROOT` points to a separate built release. See [continuous-series policy, rebuild and validation](CONTINUOUS.md). Individual contract files and scientific certification remain unchanged.
 
 ## Install and launch
 
@@ -49,7 +55,7 @@ DuckDB queries Parquet with date, contract, availability, and eligibility predic
 - Contract, date, timeframe, display mode, layout dimensions, panel visibility, indicator settings, and chart time windows persist locally. Resizing preserves the time window.
 - Choose a drawing tool and click one anchor (horizontal line/ray) or two anchors (trendline, rectangle, Fibonacci, price range). Objects supports selection, hide/show, deletion and UTC/price anchor editing; selected handles can be dragged. Escape cancels placement and Delete removes the selection. Drawings persist per contract/session/display, across timeframes.
 - **Start replay** resets to the first completed observed 1m bar. Play, pause, restart, or step one minute forward. Speeds are 1×, 2×, 5× and 10×. Speed controls the delay between observations; API latency adds to this delay. One-minute stepping is preserved; Bar → advances one selected timeframe of observed minutes (capped at session end). Jump uses HH:MM ET within the selected session. Space toggles playback, → steps a bar, and F toggles fullscreen. Exit returns to the completed historical session.
-- Data Explorer follows the page containing the replay cursor and paginates the selected timeframe's observed candles; search filters only the current page. Aggregated rows include their source-minute count and developing status. The remaining workspace tabs are explicitly inactive.
+- Data Explorer follows the page containing the replay cursor and paginates the selected timeframe's observed candles; search filters only the current page. Aggregated rows include their source-minute count and developing status. Strategy Research and Experiment History are connected; Backtest Results explains the unavailable accounting metrics.
 - Dataset & provenance shows release counts, roll policy, limitations, and verified hashes.
 
 ## Causality and indicator definitions

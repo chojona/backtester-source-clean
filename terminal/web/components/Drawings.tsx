@@ -1,5 +1,6 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
+import {createPortal} from "react-dom";
 import {
   IChartApi,
   ISeriesApi,
@@ -22,11 +23,13 @@ export default function Drawings({
   series,
   data,
   settings,
+  toolbarTarget,
 }: {
   chart: IChartApi;
   series: ISeriesApi<"Candlestick">;
   data: Snapshot | null;
   settings: Indicators;
+  toolbarTarget?: HTMLElement|null;
 }) {
   const [objects, setObjects] = useState<Drawing[]>([]),
     [tool, setTool] = useState("select"),
@@ -125,9 +128,8 @@ export default function Drawings({
   };
   const visible = visibleDrawings(objects, asOf),
     active = visible.find((d) => d.id === selected);
-  return (
-    <>
-      <div className="drawing-toolbar">
+  const toolbar = (
+<div className="drawing-toolbar">
         <select
           aria-label="Drawing tool"
           value={tool}
@@ -237,6 +239,10 @@ export default function Drawings({
         {pending && <span>Click second anchor · Esc cancels</span>}
         {warning && <span role="status">{warning}</span>}
       </div>
+  );
+  return (
+    <>
+      {toolbarTarget ? createPortal(toolbar,toolbarTarget) : toolbar}
       <svg
         ref={svg}
         className={

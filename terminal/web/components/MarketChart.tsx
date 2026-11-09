@@ -7,12 +7,16 @@ import {
   createChart,
   ColorType,
   LineStyle,
+  TickMarkType,
   type IChartApi,
   type ISeriesApi,
   type UTCTimestamp,
 } from "lightweight-charts";
 import { Bar, Snapshot, fmt, clock } from "@/lib/types";
 import Drawings from "./Drawings";
+import ResearchOverlay from "./ResearchOverlay";
+import ContinuousOverlay from "./ContinuousOverlay";
+import {indicatorPoints} from "@/lib/continuous";
 import { Indicators, readLocal, writeLocal } from "@/lib/workspace";
 export default function MarketChart({
   data,
@@ -21,6 +25,7 @@ export default function MarketChart({
   opening,
   settings,
   replay,
+  datasetHash,
 }: {
   data: Snapshot | null;
   vwap: boolean;
@@ -28,6 +33,7 @@ export default function MarketChart({
   opening: boolean;
   settings: Indicators;
   replay: boolean;
+  datasetHash?: string;
 }) {
   const host = useRef<HTMLDivElement>(null),
     chart = useRef<IChartApi | null>(null);
@@ -47,6 +53,7 @@ export default function MarketChart({
   const updating = useRef(false);
   const dataRef = useRef(data);
   dataRef.current = data;
+  const drawingTools=useRef<HTMLDivElement>(null);
   const identity = useRef("");
   const lastReplay = useRef<{
     id: string;
@@ -54,6 +61,7 @@ export default function MarketChart({
     count: number;
   } | null>(null);
   const [hover, setHover] = useState<Bar | null>(null);
+  const [rollsVisible,setRollsVisible]=useState(false);
   useEffect(() => {
     if (!host.current) return;
     const c = createChart(host.current, {
@@ -79,7 +87,14 @@ export default function MarketChart({
         secondsVisible: false,
         rightOffset: 8,
         lockVisibleTimeRangeOnResize: true,
-        tickMarkFormatter: (time: number) => clock(time),
+        tickMarkFormatter: (time: number, kind: TickMarkType) => {
+          if(!dataRef.current?.continuous || dataRef.current.continuous.history_sessions===1)return clock(time);
+          const date=new Date(time*1000);
+          if(kind===TickMarkType.Year)return date.toLocaleDateString("en-US",{timeZone:"America/New_York",year:"numeric"});
+          if(kind===TickMarkType.Month)return date.toLocaleDateString("en-US",{timeZone:"America/New_York",month:"short",year:"2-digit"});
+          if(kind===TickMarkType.DayOfMonth)return date.toLocaleDateString("en-US",{timeZone:"America/New_York",month:"short",day:"numeric"});
+          return clock(time);
+        },
       },
       localization: {
         timeFormatter: (time: number) =>
@@ -144,8 +159,9 @@ export default function MarketChart({
       c = chart.current;
     if (!s || !c) return;
     const bars = data?.bars ?? [];
+    c.timeScale().applyOptions({minBarSpacing:data?.continuous ? 0.02 : 0.5});
     const id = data
-      ? `${data.contract}/${data.session}/${data.timeframe}/${data.display || "Globex"}${replay ? "/replay" : ""}`
+      ? `${data.contract}/${data.session}/${data.timeframe}/${data.display || "Globex"}${replay ? "/replay" : ""}${data.continuous ? `/history/${data.continuous.history_sessions}` : ""}`
       : "";
     const nextRange =
       identity.current !== id
@@ -157,9 +173,10 @@ export default function MarketChart({
     const beforeRange = c.timeScale().getVisibleLogicalRange();
     const prior = lastReplay.current;
     updating.current = true;
-    s.candles.setData(
-      bars.map((b) => ({ ...b, time: b.time as UTCTimestamp })),
-    );
+    const candles=bars.map(b=>({...b,time:b.time as UTCTimestamp,color:b.eligible_full_session===false?'#637084':undefined,wickColor:b.eligible_full_session===false?'#637084':undefined}));
+    const times=new Set(bars.map(b=>b.time));
+    const missing=data?.timeframe==='1m' ? (data?.continuous?.gaps||[]).map(g=>Math.floor(Date.parse(g.start_utc)/1000)).filter(t=>!times.has(t)) : [];
+    s.candles.setData([...candles,...missing.map(time=>({time:time as UTCTimestamp}))].sort((a,b)=>Number(a.time)-Number(b.time)));
     s.volume.setData(
       bars.map((b) => ({
         time: b.time as UTCTimestamp,
@@ -175,9 +192,7 @@ export default function MarketChart({
       ["lower", "vwap_lower"],
     ] as const) {
       s[key].setData(
-        bars
-          .filter((b) => b[field] !== null)
-          .map((b) => ({ time: b.time as UTCTimestamp, value: b[field]! })),
+        indicatorPoints(bars,field,!!data?.continuous).map(point=>({...point,time:point.time as UTCTimestamp})),
       );
       const opt =
         settings[
@@ -272,7 +287,8 @@ export default function MarketChart({
     (hover ? data?.bars.find((b) => b.time === hover.time) : null) ??
     data?.bars.at(-1);
   return (
-    <div className="chart-wrap">
+    <div className="chart-wrap clean-chart">
+      <div className="chart-header">
       <div className="chart-readout">
         <span className="chart-symbol">
           {data?.contract || "NQ"}{" "}
@@ -290,23 +306,10 @@ export default function MarketChart({
           </span>
         </div>
       </div>
-      <div
-        ref={host}
-        className="chart-canvas"
-        aria-label="Historical NQ candlestick chart"
-        data-testid="market-chart"
-      />
-      {apis && (
-        <Drawings
-          chart={apis.chart}
-          series={apis.series}
-          data={data}
-          settings={settings}
-        />
-      )}
-      <div className="chart-watermark">
-        NQ<span>NASDAQ 100 FUTURES</span>
-      </div>
+      {data?.continuous && <div className="continuous-readout" data-testid="continuous-readout" title={`Raw OHLC ${active?.raw_open}, ${active?.raw_high}, ${active?.raw_low}, ${active?.raw_close}; offset ${active?.adjustment_offset}; Roll ${active?.roll_id || 'initial'}; adjustment ${active?.adjustment_status || 'unadjusted'}`}>
+        Source {active?.source_contract || data.continuous.source_contract} · raw close {fmt(active?.raw_close)} · offset {fmt(active?.adjustment_offset)} · {active?.retrospective ? `retrospective block ${active?.adjustment_block_id}` : 'unadjusted'} · {active?.eligible_full_session ? 'research eligible (not certified)' : 'research ineligible'}
+
+      </div>}
       <div className="chart-legend">
         {vwap && (
           <span>
@@ -326,6 +329,35 @@ export default function MarketChart({
             Previous session H/L
           </span>
         )}
+      </div>
+      <div className="chart-view-controls">
+        {data?.continuous && <span className="coverage-label" data-testid="continuous-coverage">{data.bars.length ? `${data.bars[0].trading_date} → ${data.bars.at(-1)?.trading_date}` : 'No observations'} · {data.continuous.history_sessions.toLocaleString()} sessions</span>}
+        <div><button onClick={()=>{const c=chart.current;if(c){c.priceScale('right').applyOptions({autoScale:true});c.timeScale().fitContent();}}}>Fit history</button>
+        {data?.continuous && <label className="roll-toggle"><input aria-label="Show rollovers" type="checkbox" checked={rollsVisible} onChange={e=>setRollsVisible(e.target.checked)}/> Rollovers</label>}</div>
+      </div>
+      <div className="chart-drawing-tools" ref={drawingTools} />
+      </div>
+      <div className="chart-plot">
+      <div
+        ref={host}
+        className="chart-canvas"
+        aria-label="Historical NQ candlestick chart"
+        data-testid="market-chart"
+      />
+      {apis && (<>
+        <ResearchOverlay chart={apis.chart} series={apis.series} data={data} replay={replay} datasetHash={datasetHash} />
+        {rollsVisible && <ContinuousOverlay chart={apis.chart} series={apis.series} data={data} host={host.current} />}
+        <Drawings
+          chart={apis.chart}
+          series={apis.series}
+          data={data}
+          settings={settings}
+          toolbarTarget={drawingTools.current}
+        />
+      </>)}
+      <div className="chart-watermark">
+        NQ<span>NASDAQ 100 FUTURES</span>
+      </div>
       </div>
     </div>
   );

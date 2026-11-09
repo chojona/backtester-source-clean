@@ -108,9 +108,9 @@ test("v0.2 real-data workspace, drawings, persistence and causal replay", async 
   ]) {
     await page.getByLabel("Drawing tool", { exact: true }).selectOption(type);
     const b = (await chart.boundingBox())!;
-    await page.mouse.click(b.x + 250, b.y + 200);
+    await page.mouse.click(b.x + b.width * .25, b.y + b.height * .32);
     if (!["horizontal", "ray"].includes(type))
-      await page.mouse.click(b.x + 400, b.y + 280);
+      await page.mouse.click(b.x + b.width * .4, b.y + b.height * .48);
   }
   await expect(page.locator(".drawing-toolbar summary")).toHaveText(
     "Objects (6)",
@@ -148,7 +148,7 @@ test("v0.2 real-data workspace, drawings, persistence and causal replay", async 
   await expect(page.locator(".chart-symbol")).toContainText("15m");
   expect(await drawings()).toEqual(edited);
   const b = (await chart.boundingBox())!;
-  await page.mouse.move(b.x + b.width / 2, b.y + 200);
+  await page.mouse.move(b.x + b.width / 2, b.y + b.height * .32);
   await page.mouse.wheel(0, -200);
   await page.waitForTimeout(200);
   expect(await drawings()).toEqual(edited);
@@ -280,7 +280,7 @@ test("v0.2 real-data workspace, drawings, persistence and causal replay", async 
   );
   await page.getByLabel("Drawing tool").selectOption("horizontal");
   const rb = (await chart.boundingBox())!;
-  await page.mouse.click(rb.x + 250, rb.y + 200);
+  await page.mouse.click(rb.x + rb.width * .25, rb.y + rb.height * .32);
   await expect(page.locator(".drawing-toolbar summary")).toHaveText(
     "Objects (1)",
   );
