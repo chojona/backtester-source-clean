@@ -3,11 +3,10 @@
 ## Source reconciliation and infrastructure reuse
 
 This task started at `b998421`, before the terminal existed. The local repository
-also contains v0.2 (`c106421`). Its `terminal/` source is restored here, with its
-existing Next.js/React interface, FastAPI/DuckDB dataset service, drawings,
-workspace persistence, interval aggregation, replay, indicators and provenance.
-The frontend source publication allowance is restored from the same commit;
-production evidence registries and certification code are unchanged.
+contained v0.2 (`c106421`). The integration applies the v0.3 differences from
+that baseline to upstream `main` at `ada63a6`, preserving the documentation,
+source-boundary rules and v0.2 charting and replay paths. Production evidence
+registries and certification code remain unchanged.
 
 Research reuses `features.VWAP`, the cryptographically bound
 `ReadOnlyExploratoryAdapter`, calendar/grid validation, classification and
@@ -138,7 +137,9 @@ Synthetic provenance and a persistent synthetic banner accompany every demo run.
 ## Validation commands
 
 ```sh
-python -m pytest tests terminal/tests -q
+python -m pytest tests -q
+# Use the terminal environment for the API suite.
+.venv-terminal/bin/python -m pytest terminal/tests -q
 python scripts/check_source_boundary.py
 cd terminal/web
 npm run typecheck
@@ -181,6 +182,27 @@ validation results appended below for exact outcomes.
 - Final desktop/mobile QA corrected mobile grid overflow; a 390px viewport now
   stays within 390px. The research chart axis uses ET.
 
-The original historical browser cases were not run: they require licensed market
-inputs and would inspect actual observations. No empirical result is claimed.
-The displayed software-demo metrics describe formulas, not the NQ market.
+These results describe the original local v0.3 implementation. The integration
+also verifies the release-backed chart path and adds a separate synthetic CI
+workflow. See the [development guide](../docs/DEVELOPMENT.md#what-ci-runs).
+
+## Integration verification
+
+| Check | Result |
+| --- | --- |
+| Core offline Python | 401 passed, 3 skipped |
+| Terminal backend with the external release | 44 passed |
+| Terminal backend without the external release | 13 passed, 31 licensed checks skipped |
+| Production browser with the external release | 10 passed |
+| Production browser with formula-only fixtures | 6 passed, including 2 chart geometry checks |
+| TypeScript and Next.js production build | Passed |
+| Source boundary and whitespace | Passed |
+
+The core skips were two optional Databento SDK checks and the live provider
+opt-in check. The backend emitted one Starlette TestClient/httpx deprecation
+warning in each profile. The release-backed API verified six source artifacts
+from NQ OHLCV research v2.0.0, with 1,557 eligible sessions and 2,141,265
+eligible bars. Continuous v1.0.0 retained 5,537,141 observed minutes and 11
+unresolved rolls across 12 independently anchored blocks. Both external seals
+matched before and after testing. See the [continuous guide](CONTINUOUS.md)
+and [research review status](../docs/RESEARCH_REVIEW_STATUS.md).

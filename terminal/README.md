@@ -8,6 +8,8 @@ Local Next.js / TypeScript / Tailwind / Lightweight Charts frontend, backed by a
 
 The symbol selector now supports **NQ1! Raw** and **NQ1! Adjusted** when `NQ_CONTINUOUS_ROOT` points to a separate built release. See [continuous-series policy, rebuild and validation](CONTINUOUS.md). Individual contract files and scientific certification remain unchanged.
 
+Pan near either edge of an intraday continuous chart to load adjacent historical sessions. The selected session, drawings and replay context stay anchored. Use **Full history · daily** for the complete retrospective daily view. Switching from full history to intraday starts with 20 sessions.
+
 ## Install and launch
 
 Requires Python 3.12+, Node 22+, npm, and the existing licensed dataset.
@@ -100,13 +102,14 @@ npm run typecheck
 npm run build
 npx playwright install chromium
 # With both servers running:
-npm run test:smoke
+npm run test:smoke -- terminal.spec.ts v02.spec.ts continuous.spec.ts
+NQ_BROWSER_RELEASE=1 npm run test:smoke -- intraday.spec.ts -g 'release-backed'
 ```
 
 If Chromium already exists, `PLAYWRIGHT_CHROMIUM_EXECUTABLE=/absolute/path/to/chrome-headless-shell npm run test:smoke` uses it without downloading another copy.
 
 Tests compare real source rows to API candles, verify causal prefixes and aggregation across all six timeframes, independently recompute VWAP and OR, check exact contract and eligibility rejection, timestamp availability at close, source hash failure, pagination, bounded requests, error recovery, responsive layout, and browser replay controls. Existing research tests remain separate (`python -m pytest tests`). Browser screenshots and traces are ignored generated outputs under `terminal/web/test-results/`.
 
-See [v0.2 implementation and verification](IMPLEMENTATION_V0_2.md) for the delivered changes and test results.
+The synthetic CI path uses an ephemeral, formula-only release with the same API and production frontend. See the [development guide](../docs/DEVELOPMENT.md#what-ci-runs) for the separate commands. The [v0.2 report](IMPLEMENTATION_V0_2.md) records the baseline.
 
 For the broader repository, see the [documentation index](../README.md#start-here), [architecture](../docs/ARCHITECTURE.md), and [development guide](../docs/DEVELOPMENT.md).

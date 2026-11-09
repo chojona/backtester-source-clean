@@ -49,9 +49,9 @@ export type Snapshot = {
   display: "Globex" | "RTH";
   continuous?: {
     version:string; build_id:string; retrospective:boolean; source_contract:string;
-    history_sessions:number; performance_eligible:boolean; notice:string;
+    history_sessions:number; session_dates:string[]; performance_eligible:boolean; notice:string;
     rolls: {roll_id:string;trading_date:string;decision_utc:string;old_contract:string;new_contract:string;overlap?:{status:string;gap:number|null}}[];
-    gaps:{start_utc:string;end_exclusive_utc:string;classification:string;minutes:number}[];
+    gaps:{trading_date:string;start_utc:string;end_exclusive_utc:string;classification:string;minutes:number}[];
     gap_count:number;gaps_truncated:boolean;
     ineligible_sessions:{trading_date:string;quality_flags:string;absent_candidate_minutes:number}[];
   };

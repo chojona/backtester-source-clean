@@ -141,6 +141,12 @@ Existing snapshot/bars/indicators/statistics routes accept the two exact symbols
 `GET /api/sessions` accepts up to 5,000 dates; continuous sessions retain original
 selection/exclusion metadata. Existing outright behavior remains unchanged.
 
+- `GET /api/continuous/intraday` pages by declared trading date on either side
+  of an exclusive `anchor`. Pass the exact continuous symbol, direction
+  (`older` or `newer`), intraday timeframe and chart settings. The default is
+  10 sessions and the maximum is 20. The response identifies its release,
+  symbol and session dates, including dates with no bars. Requests with a
+  replay cursor or `as_of` are rejected.
 - `GET /api/continuous/manifest`: build specification, rolls and quality report.
 - `GET /api/continuous/gaps?start=YYYY-MM-DD&end=YYYY-MM-DD&offset=0&limit=500`:
   exact intervals; optional aware `as_of` returns completed intervals only.
@@ -154,8 +160,8 @@ full history separately.
 ## Validation
 
 ```sh
-python -m pytest tests/test_continuous_terminal.py -q
-python -m pytest tests terminal/tests -q
+python -m pytest terminal/tests/test_continuous_terminal.py -q
+python -m pytest terminal/tests -q
 cd terminal/web
 npm run typecheck
 npm run build
@@ -225,9 +231,18 @@ Year ticks display years; month/day labels appear as the user zooms in. Coverage
 dates remain visible so yearly ticks cannot be mistaken for January-only data.
 Data files, eligibility, adjustments and certification policy are unchanged.
 
-Switching from full daily history to an intraday timeframe now selects an
-explicit 20-session window before issuing a data request. A visible notice
-explains how to navigate earlier sessions; returning to D restores the prior
-full-history range. Manual 120-session intraday windows remain available.
-The 200,000-observation backend guard still applies to direct API requests;
-this UI change does not implement viewport-based lazy loading or alter data.
+Switching from full daily history to intraday starts with 20 sessions. Pan
+near either edge to load 10 more declared sessions per request. The chart
+deduplicates timestamps, retains up to 140 sessions and evicts the far edge
+when the cache fills. The visible time anchor and drawing coordinates are
+preserved across successful loads. If a request fails, **Retry history** keeps
+the current chart in place. **D** restores the prior full daily range.
+
+Incremental loading applies to retrospective Raw and Adjusted browsing. Each
+mode has its own cache, scoped to the release and chart settings. Selection
+changes and entry into replay cancel pending requests. The selected session
+still controls replay, analytics, Explorer and the Data quality panel.
+Empty sessions advance the date window without filling bars. Roll gaps keep
+their separate adjustment blocks. Historical pages establish no decision-time
+publication evidence. The 200,000-observation guard still applies to direct
+snapshot requests.

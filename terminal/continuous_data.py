@@ -18,12 +18,21 @@ class ContinuousStore:
         self.manifest = json.loads((self.root/'SUCCESS.json').read_text())
         if self.manifest['version'] != VERSION or identity(self.manifest['specification']) != self.manifest['build_id']:
             raise DataError('Invalid continuous artifact version or identity')
-        for name, expected in self.manifest['outputs'].items():
+        outputs = self.manifest['outputs']
+        required = {*SYMBOLS.values(), 'session-eligibility.parquet', 'selected-gap-intervals.parquet',
+                    'rollover-manifest.json', 'adjustment-manifest.json', 'quality-report.json'}
+        if missing := required.difference(outputs):
+            raise DataError(f'Continuous seal is missing output hashes: {", ".join(sorted(missing))}')
+        for name, expected in outputs.items():
             if Path(name).name != name or digest(self.root/name) != expected:
                 raise DataError('Changed continuous artifact: '+name)
+        inputs = self.manifest['specification']['inputs']
         for name in ('summary.json','session-eligibility.parquet','selected-observations-with-flags.parquet','contract-rolls.parquet'):
-            if self.manifest['specification']['inputs'][name] != original.hashes[name]:
+            if inputs[name] != original.hashes[name]:
                 raise DataError('Continuous artifact belongs to a different source release')
+        for name in ('session-eligibility.parquet', 'selected-gap-intervals.parquet'):
+            if outputs[name] != inputs[name]:
+                raise DataError('Copied continuous metadata differs from its bound source: '+name)
         self.rolls = json.loads((self.root/'rollover-manifest.json').read_text())['rolls']
         self.quality = json.loads((self.root/'quality-report.json').read_text())
 
@@ -49,6 +58,27 @@ class ContinuousStore:
             FROM sessions WHERE (? IS NULL OR trading_date>=?) AND (? IS NULL OR trading_date<=?)
             ORDER BY trading_date DESC LIMIT ? OFFSET ?''',
             [symbol,str(start) if start else None,str(start) if start else None,str(end) if end else None,str(end) if end else None,limit,offset])
+
+    def intraday_window(self, symbol, anchor, direction, timeframe, display,
+                        opening_minutes, deviations, limit):
+        # Page by declared sessions so gaps and empty sessions never stall a pan.
+        comparison, order = ('<', 'DESC') if direction == 'older' else ('>', 'ASC')
+        dates = self.query(symbol, f'''SELECT trading_date FROM sessions
+            WHERE trading_date {comparison} ? ORDER BY trading_date {order} LIMIT ?''',
+            [anchor.isoformat(), limit])
+        page = {'contract': symbol, 'build_id': self.manifest['build_id'],
+                'timeframe': timeframe, 'display': display,
+                'session_dates': [], 'bars': [], 'gaps': [], 'rolls': [], 'as_of': None,
+                'at_edge': len(dates) < limit}
+        if dates:
+            end = date.fromisoformat(max(row['trading_date'] for row in dates))
+            snapshot = self.snapshot(symbol, end, timeframe, display=display,
+                                     opening_minutes=opening_minutes, deviations=deviations,
+                                     history_sessions=len(dates))
+            page.update(bars=snapshot['bars'], as_of=snapshot['as_of'])
+            for field in ('session_dates', 'gaps', 'rolls'):
+                page[field] = snapshot['continuous'][field]
+        return page
 
     def snapshot(self,symbol,session,timeframe='1m',cursor=None,as_of=None,offset=0,limit=50,
                  display='Globex',opening_minutes=30,deviations=1,history_sessions=1):
@@ -181,7 +211,8 @@ class ContinuousStore:
             'eligibility':{'eligible_full_session':chosen[0]['eligible_full_session'],'strict_eligible':False,
                 'calendar_status':chosen[0]['calendar_status'],'roll':chosen[0]['roll'],'warmup_14_ready':chosen[0]['warmup_14_ready']},
             'continuous':{'version':VERSION,'build_id':self.manifest['build_id'],'retrospective':adjusted,
-                'source_contract':chosen[0]['source_contract'],'history_sessions':len(chosen),'rolls':transitions,
+                'source_contract':chosen[0]['source_contract'],'history_sessions':len(chosen),
+                'session_dates':[s['trading_date'] for s in reversed(chosen)],'rolls':transitions,
                 'gaps':gaps,'gap_count':gap_count,'gaps_truncated':gap_count>len(gaps),'ineligible_sessions':[{k:s[k] for k in ('trading_date','quality_flags','absent_candidate_minutes')} for s in chosen if not s['eligible_full_session']],
                 'unadjustable_observations':unresolved,'performance_eligible':False,
                 'notice':'Retrospective additive blocks; unresolved rolls separate price anchors. Replay and strategy execution disabled.' if adjusted else 'Unadjusted observed prices; research exclusions retained. Roll jumps are not performance returns.'}}

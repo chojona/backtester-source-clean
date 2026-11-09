@@ -631,6 +631,9 @@ export default function Terminal() {
                   settings={settings}
                   replay={cursor !== null}
                   datasetHash={provenance?.hashes["research.parquet"]}
+                  allowHistory={!needsIntradayWindow && data?.contract === contract &&
+                    data.session === session && data.timeframe === frame && data.display === display &&
+                    data.opening_minutes === settings.openingMinutes && data.deviations === settings.deviations}
                 />
                 {loading && (
                   <div

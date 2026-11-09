@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test';
 // Requires API NQ_RESEARCH_DEMO=1; never opens licensed data or final holdout.
-test('research execution, history, chart and replay', async ({ page }) => {
+test('research execution, history, chart and replay', async ({ page }, testInfo) => {
   const errors:string[]=[];
   page.on('pageerror',e=>errors.push(e.message));
   await page.goto('/');
@@ -29,17 +29,19 @@ test('research execution, history, chart and replay', async ({ page }) => {
   await research.locator('#end').evaluate((node:HTMLInputElement)=>{node.max='2026-01-20';node.value='2026-01-20';});
   await research.getByRole('button',{name:'Run experiment',exact:true}).click();
   await expect(research.locator('#status')).toContainText('holdout',{timeout:60000});
-  await page.screenshot({path:'/tmp/nq-terminal-v03-smoke.png',fullPage:true});
+  await page.screenshot({path:testInfo.outputPath('research-smoke.png'),fullPage:true});
   expect(errors).toEqual([]);
 });
 
 
-test('research results fit a mobile viewport', async ({ page }) => {
+test('research results fit a mobile viewport', async ({ page }, testInfo) => {
   await page.setViewportSize({width:390,height:844});
   await page.goto('/research/');
-  await page.locator('#history button').first().click();
+  await expect(page.locator('#status')).toContainText('Ready');
+  await page.getByRole('button',{name:'Run experiment',exact:true}).click();
+  await expect(page.locator('#status')).toContainText('Completed');
   await expect(page.locator('#chartInfo')).toContainText('NQZ26');
   await expect(page.locator('#results')).toContainText('Mean hypothetical net / event');
   expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
-  await page.screenshot({path:'/tmp/nq-terminal-v03-mobile.png',fullPage:true});
+  await page.screenshot({path:testInfo.outputPath('research-mobile.png'),fullPage:true});
 });

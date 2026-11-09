@@ -146,6 +146,30 @@ def continuous_manifest(db=Depends(store)):
     return {'manifest':continuous.manifest,'rolls':continuous.rolls,'quality':continuous.quality}
 
 
+@app.get('/api/continuous/intraday')
+def continuous_intraday(
+    contract: Literal['NQ1! Raw', 'NQ1! Adjusted'],
+    anchor: date,
+    direction: Literal['older', 'newer'],
+    timeframe: Literal['1m', '5m', '15m', '30m', '1h'] = '1m',
+    display: Literal['Globex', 'RTH'] = 'Globex',
+    opening_minutes: int = Query(30, ge=1, le=120),
+    deviations: float = Query(1, ge=.25, le=5),
+    limit: int = Query(10, ge=1, le=20),
+    cursor: int | None = None,
+    as_of: datetime | None = None,
+    db=Depends(store),
+):
+    if cursor is not None or as_of is not None:
+        raise HTTPException(422, 'Intraday history windows are for retrospective browsing only')
+    try:
+        return chart_store(db, contract).intraday_window(
+            contract, anchor, direction, timeframe, display, opening_minutes, deviations, limit,
+        )
+    except DataError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
 @app.get('/api/continuous/gaps')
 def continuous_gaps(start:date,end:date,as_of:datetime|None=None,
                     limit:int=Query(500,ge=1,le=2000),offset:int=Query(0,ge=0),db=Depends(store)):
