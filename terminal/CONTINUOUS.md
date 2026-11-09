@@ -99,9 +99,9 @@ See README for dependency installation. No auto-download or rebuild occurs.
 
 The continuous symbol's session selector spans all 4,262 declared dates, including
 missing/ineligible ones; its source contract changes transparently as dates are
-navigated. The Continuous history selector offers one, 20, 120 or all sessions;
-long ranges automatically select daily candles. Intraday requests are limited
-to 200,000 source observations. Daily aggregation happens in DuckDB.
+navigated. The Continuous history selector offers one, 20, 120 or all sessions.
+Full history selects daily candles. Daily aggregation happens in DuckDB. The
+legacy snapshot API retains its 200,000 intraday source observation limit.
 
 Every aggregate stays inside one source contract, session and segment, retaining
 its roll ID and offset. VWAP and bands reset by session/source contract; indicator
@@ -141,7 +141,7 @@ Existing snapshot/bars/indicators/statistics routes accept the two exact symbols
 `GET /api/sessions` accepts up to 5,000 dates; continuous sessions retain original
 selection/exclusion metadata. Existing outright behavior remains unchanged.
 
-- `GET /api/continuous/intraday` pages by declared trading date on either side
+- The legacy `GET /api/continuous/intraday` route pages by declared trading date on either side
   of an exclusive `anchor`. Pass the exact continuous symbol, direction
   (`older` or `newer`), intraday timeframe and chart settings. The default is
   10 sessions and the maximum is 20. The response identifies its release,
@@ -231,18 +231,22 @@ Year ticks display years; month/day labels appear as the user zooms in. Coverage
 dates remain visible so yearly ticks cannot be mistaken for January-only data.
 Data files, eligibility, adjustments and certification policy are unchanged.
 
-Switching from full daily history to intraday starts with 20 sessions. Pan
-near either edge to load 10 more declared sessions per request. The chart
-deduplicates timestamps, retains up to 140 sessions and evicts the far edge
-when the cache fills. The visible time anchor and drawing coordinates are
-preserved across successful loads. If a request fails, **Retry history** keeps
-the current chart in place. **D** restores the prior full daily range.
+Switching from full daily history to intraday targets 20 startup sessions.
+Pan near either edge to load adjacent sessions. The chart deduplicates
+timestamps and evicts complete pages from the far edge at its 30,000-candle
+or 32-page limit. The visible time anchor and drawing coordinates persist
+across loads. **Retry history** keeps the current chart in place while
+retrying a page. **D** restores the full daily range.
 
-Incremental loading applies to retrospective Raw and Adjusted browsing. Each
-mode has its own cache, scoped to the release and chart settings. Selection
-changes and entry into replay cancel pending requests. The selected session
-still controls replay, analytics, Explorer and the Data quality panel.
-Empty sessions advance the date window without filling bars. Roll gaps keep
-their separate adjustment blocks. Historical pages establish no decision-time
-publication evidence. The 200,000-observation guard still applies to direct
-snapshot requests.
+The chart uses `/api/chart/window` for both modes and all timeframes.
+Signed cursors bind the source release, verified derived output hashes,
+series, display and indicator settings. Whole-session pages carry reviewed
+gaps and roll metadata. Empty sessions advance coverage without filling bars.
+The quality panel describes the loaded chart window.
+
+Raw cutoff requests filter to observations closed by the cutoff. Adjusted
+prices remain anchored independently across unresolved rolls. The endpoint
+rejects adjusted cutoff requests. Selection changes and entry into replay
+cancel pending browser requests. Replay, analytics and Explorer use the
+selected-session snapshot. Historical pages establish no decision-time
+publication evidence. [Phase 1 verification](PHASE1_VERIFICATION.md)

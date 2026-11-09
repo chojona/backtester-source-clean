@@ -88,3 +88,15 @@ Drawings are independent of timeframe and are reprojected when scales change. Ob
 ## Operational limits
 
 The terminal has no execution/brokerage endpoints, live data feed, order flow, options flow, or historical strategy runner. The offline Matplotlib/HTML chart exporter is a separate application path with its own aggregation behavior; its exported reports are not terminal inputs.
+
+
+### Terminal chart history
+
+The chart obtains history through `/api/chart/window`. The endpoint checks
+verified release identity, bounds each query to selected dates, and returns
+whole-session pages with separate continuation cursors. Exact contracts use
+the sealed eligibility predicate. Continuous Raw and Adjusted use the
+verified derived files and preserve roll and adjustment block identity.
+A browser-local cache merges observed bars and keeps gaps separately.
+The selected-session snapshot remains the source for replay and the
+session analytics panels. [Phase 1 architecture and verification](../terminal/PHASE1_VERIFICATION.md)

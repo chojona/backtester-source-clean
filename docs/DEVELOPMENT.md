@@ -56,14 +56,13 @@ For browser verification, run the frontend and API with the actual release, then
 ```sh
 cd terminal/web
 npx playwright install chromium
-npm run test:smoke -- terminal.spec.ts v02.spec.ts continuous.spec.ts
-NQ_BROWSER_RELEASE=1 npm run test:smoke -- intraday.spec.ts -g 'release-backed'
+NQ_BROWSER_RELEASE=1 npm run test:smoke -- terminal.spec.ts v02.spec.ts continuous.spec.ts intraday.spec.ts
 ```
 
 If a compatible Chromium already exists:
 
 ```sh
-PLAYWRIGHT_CHROMIUM_EXECUTABLE=/absolute/path/to/chrome-headless-shell \
+NQ_BROWSER_RELEASE=1 PLAYWRIGHT_CHROMIUM_EXECUTABLE=/absolute/path/to/chrome-headless-shell \
   npm run test:smoke -- terminal.spec.ts v02.spec.ts continuous.spec.ts
 ```
 
@@ -85,8 +84,7 @@ npm --prefix terminal/web run start
 Then run the browser checks from `terminal/web`:
 
 ```sh
-NQ_BROWSER_FIXTURE=1 npm run test:smoke -- intraday.spec.ts research.spec.ts -g 'constructed intraday fixture|research'
-npm run test:smoke -- v02.spec.ts continuous.spec.ts -g 'price/time projection|indicator lines'
+NQ_BROWSER_FIXTURE=1 npm run test:smoke
 ```
 
 The fixture writes temporary test inputs and synthetic experiment results outside the checkout. Stop both processes with Ctrl-C. See the [terminal guide](../terminal/README.md#verification) for the separate licensed browser run.

@@ -21,15 +21,12 @@ import {
   X,
 } from "lucide-react";
 import MarketChart from "./MarketChart";
-import ContinuousQuality from "./ContinuousQuality";
 import IndicatorManager from "./IndicatorManager";
 import {
-  normalizeWorkspace,
   defaultWorkspace,
   defaultIndicators,
-  readLocal,
-  writeLocal,
-  Workspace,
+  readWorkspace,
+  writeWorkspace,
   Indicators,
 } from "@/lib/workspace";
 import Analytics from "./Analytics";
@@ -46,7 +43,7 @@ import {
 } from "@/lib/types";
 const frames: Frame[] = ["1m", "5m", "15m", "30m", "1h", "daily"];
 export default function Terminal() {
-  const [historySessions,setHistorySessions]=useState(1);
+  const [historySessions,setHistorySessions]=useState(20);
   const wideHistory=useRef<number|null>(null);
   const [rangeNotice,setRangeNotice]=useState("");
   const [contracts, setContracts] = useState<Contract[]>([]),
@@ -54,7 +51,7 @@ export default function Terminal() {
   const [contract, setContract] = useState(""),
     [session, setSession] = useState(""),
     [frame, setFrame] = useState<Frame>("1m");
-  const [data, setData] = useState<Snapshot | null>(null),
+  const [snapshot, setData] = useState<{ data: Snapshot; replay: boolean } | null>(null),
     [provenance, setProvenance] = useState<Provenance | null>(null);
   const [error, setError] = useState(""),
     [loading, setLoading] = useState(true),
@@ -82,9 +79,8 @@ export default function Terminal() {
   const [offset, setOffset] = useState(0),
     [details, setDetails] = useState(false);
   useEffect(() => {
-    const state = normalizeWorkspace(
-      readLocal<Workspace>("nq:v2:workspace", defaultWorkspace),
-    );
+    const state = readWorkspace();
+    setHistorySessions(state.historySessions);
     setContract(typeof state.contract === "string" ? state.contract : "");
     setSession(typeof state.session === "string" ? state.session : "");
     setFrame(
@@ -104,19 +100,20 @@ export default function Terminal() {
   useEffect(() => {
     if (
       ready &&
-      !writeLocal("nq:v2:workspace", {
+      !writeWorkspace({
         ...layout,
         contract,
         session,
         frame,
         display,
         indicators: settings,
+        historySessions,
       })
     )
       setStorageWarning(
         "Local storage unavailable; settings last for this visit.",
       );
-  }, [ready, layout, contract, session, frame, display, settings]);
+  }, [ready, layout, contract, session, frame, display, settings, historySessions]);
   useEffect(() => {
     if (!ready) return;
     const ac = new AbortController();
@@ -127,9 +124,10 @@ export default function Terminal() {
       api<Provenance>("provenance", ac.signal),
     ])
       .then(([c, p]) => {
+        if (ac.signal.aborted) return;
         setContracts(c);
         setProvenance(p);
-        setContract((old) => old || c[0]?.contract || "");
+        setContract((old) => c.some(row => row.contract === old) ? old : c[0]?.contract || "");
         if (!c.length) {
           setError("The sealed release contains no eligible contracts.");
           setLoading(false);
@@ -151,6 +149,7 @@ export default function Terminal() {
     setSessions([]);
     api<Session[]>(`sessions?contract=${encodeURIComponent(contract)}&limit=${contract.startsWith("NQ1!") ? 5000 : 2000}`, ac.signal)
       .then((s) => {
+        if (ac.signal.aborted) return;
         setSessions(s);
         setSession((old) =>
           s.some((row) => row.trading_date === old)
@@ -175,7 +174,7 @@ export default function Terminal() {
     if(!needsIntradayWindow)return;
     wideHistory.current=historySessions;
     setHistorySessions(20);
-    setRangeNotice("Intraday · 20 sessions. Use the date selector for earlier history; D restores full history.");
+    setRangeNotice("Intraday · 20 sessions at startup. Pan for earlier history; D restores full history.");
   },[needsIntradayWindow,historySessions]);
   const changeFrame=(next:Frame)=>{
     if(next==='daily' && contract.startsWith('NQ1!') && wideHistory.current!==null){
@@ -185,7 +184,6 @@ export default function Terminal() {
   };
   useEffect(() => {
     if (
-      needsIntradayWindow ||
       !ready ||
       !contract ||
       !session ||
@@ -206,10 +204,10 @@ export default function Terminal() {
       opening_minutes: String(settings.openingMinutes),
       deviations: String(settings.deviations),
     });
-    if (contract.startsWith("NQ1!")) q.set("history_sessions",String(cursor === null ? historySessions : 1));
     if (cursor !== null) q.set("cursor", String(cursor));
     api<Snapshot>(`snapshot?${q}`, ac.signal)
       .then((d) => {
+        if (ac.signal.aborted) return;
         if (
           cursor !== null &&
           d.explorer.total > 0 &&
@@ -222,7 +220,7 @@ export default function Terminal() {
               d.explorer.limit,
           );
         }
-        setData(d);
+        setData({ data: d, replay: cursor !== null });
         setLoading(false);
       })
       .catch((e) => {
@@ -243,12 +241,15 @@ export default function Terminal() {
     retry,
     ready,
     sessions,
-    historySessions,
-    needsIntradayWindow,
     display,
     settings.openingMinutes,
     settings.deviations,
   ]);
+  const selected = snapshot?.data;
+  const data = selected && selected.contract === contract && selected.session === session &&
+    selected.timeframe === frame && selected.display === display && snapshot.replay === (cursor !== null) &&
+    (cursor === null || selected.cursor <= cursor) ? selected : null;
+  const chartSeries = contract.startsWith("NQ1!") ? provenance?.continuous?.chart_series : provenance?.chart_series;
   useEffect(() => {
     if (!playing || loading || !data || cursor === null) return;
     if (data.cursor >= data.total_minutes) {
@@ -279,9 +280,18 @@ export default function Terminal() {
     setData(null);
   };
   const fullscreen = () => {
-    if (document.fullscreenElement) void document.exitFullscreen();
-    else void chartPanel.current?.requestFullscreen();
+    const next = !layout.fullscreen;
+    setLayout(l => ({ ...l, fullscreen: next }));
+    if (next) void chartPanel.current?.requestFullscreen?.().catch(() => {});
+    else if (document.fullscreenElement) void document.exitFullscreen();
   };
+  useEffect(() => {
+    const onChange = () => {
+      if (!document.fullscreenElement) setLayout(l => ({ ...l, fullscreen: false }));
+    };
+    document.addEventListener("fullscreenchange", onChange);
+    return () => document.removeEventListener("fullscreenchange", onChange);
+  }, []);
   const stepBar = () => {
     if (loading || !data || cursor === null) return;
     setPlaying(false);
@@ -306,7 +316,7 @@ export default function Terminal() {
         `replay-time?${new URLSearchParams({ contract, session, time: jump })}`,
         controller.signal,
       );
-      setData(null);
+      if (controller.signal.aborted) return;
       setCursor(d.cursor);
       setOffset(0);
     } catch (e) {
@@ -329,6 +339,8 @@ export default function Terminal() {
       } else if (e.key === "ArrowRight" && cursor !== null) {
         e.preventDefault();
         stepBar();
+      } else if (e.key === "Escape" && layout.fullscreen && !document.fullscreenElement) {
+        setLayout(l => ({ ...l, fullscreen: false }));
       } else if (e.key.toLowerCase() === "f") {
         e.preventDefault();
         fullscreen();
@@ -460,7 +472,7 @@ export default function Terminal() {
           }
         >
           <section className="market-main">
-            <div className="chart-panel" ref={chartPanel}>
+            <div className={layout.fullscreen ? "chart-panel workspace-fullscreen" : "chart-panel"} ref={chartPanel}>
               <div className="chart-toolbar">
                 <div className="instrument">
                   <div className="instrument-icon">NQ</div>
@@ -587,13 +599,13 @@ export default function Terminal() {
                 </button>
               </div>
               {contract.startsWith("NQ1!") && <div className="workspace-actions">
-                <label>Continuous history <select aria-label="Continuous history" value={historySessions} disabled={cursor !== null} onChange={e=>{const n=Number(e.target.value);wideHistory.current=null;setRangeNotice("");setHistorySessions(n);if(n===5000)setFrame("daily");reset();}}>
+                <label>Continuous history <select aria-label="Continuous history" value={historySessions} disabled={cursor !== null} onChange={e=>{const n=Number(e.target.value);wideHistory.current=null;setRangeNotice("");setHistorySessions(n);if(n===5000)setFrame("daily");setOffset(0);}}>
                   <option value={1}>Selected session</option><option value={20}>20 sessions</option><option value={120}>120 sessions</option><option value={5000}>Full history · daily</option>
                 </select></label>
                 <span role="status">{rangeNotice || (contract === "NQ1! Adjusted" ? "Retrospective adjustment blocks · no replay or strategy execution" : "Observed raw prices · roll jumps excluded from returns")}</span>
               </div>}
               <div className="workspace-actions">
-                <button aria-label="Chart fullscreen" onClick={fullscreen}>
+                <button aria-label="Chart fullscreen" aria-pressed={layout.fullscreen} onClick={fullscreen}>
                   ⛶ Fullscreen
                 </button>
                 <button
@@ -621,7 +633,6 @@ export default function Terminal() {
                 </details>
                 <span>{storageWarning}</span>
               </div>
-              {data?.continuous && <ContinuousQuality data={data} />}
               <div className="chart-stage">
                 <MarketChart
                   data={data}
@@ -631,9 +642,9 @@ export default function Terminal() {
                   settings={settings}
                   replay={cursor !== null}
                   datasetHash={provenance?.hashes["research.parquet"]}
-                  allowHistory={!needsIntradayWindow && data?.contract === contract &&
-                    data.session === session && data.timeframe === frame && data.display === display &&
-                    data.opening_minutes === settings.openingMinutes && data.deviations === settings.deviations}
+                  chartSeries={chartSeries}
+                  historySessions={contract.startsWith("NQ1!") ? (needsIntradayWindow ? 20 : historySessions) : 20}
+                  allowHistory={data?.opening_minutes === settings.openingMinutes && data?.deviations === settings.deviations}
                 />
                 {loading && (
                   <div

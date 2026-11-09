@@ -15,7 +15,7 @@ export default function ContinuousQuality({data}:{data:Snapshot}){
   const dialog=useRef<HTMLDialogElement>(null),trigger=useRef<HTMLButtonElement>(null);
   const continuous=data.continuous!;
   useEffect(()=>{if(!open)return;const element=dialog.current;element?.showModal();return()=>{element?.close();trigger.current?.focus();};},[open]);
-  useEffect(()=>{if(!open||tab!=='gaps')return;const controller=new AbortController();setLoading(true);setError('');const params=new URLSearchParams({start:data.bars[0]?.trading_date||data.session,end:data.session,as_of:data.as_of,limit:String(pageSize),offset:String(page*pageSize)});api<Gap[]>('continuous/gaps?'+params,controller.signal).then(rows=>{setGaps(rows);setLoading(false);}).catch(e=>{if(!controller.signal.aborted){setError(e.message);setLoading(false);}});return()=>controller.abort();},[open,tab,page,data]);
+  useEffect(()=>{if(!open||tab!=='gaps')return;const controller=new AbortController();setLoading(true);setError('');const params=new URLSearchParams({start:continuous.session_dates[0]||data.session,end:continuous.session_dates.at(-1)||data.session,as_of:data.as_of,limit:String(pageSize),offset:String(page*pageSize)});api<Gap[]>('continuous/gaps?'+params,controller.signal).then(rows=>{setGaps(rows);setLoading(false);}).catch(e=>{if(!controller.signal.aborted){setError(e.message);setLoading(false);}});return()=>controller.abort();},[open,tab,page,data]);
   const total=tab==='rolls'?continuous.rolls.length:tab==='sessions'?continuous.ineligible_sessions.length:continuous.gap_count;
   const from=page*pageSize;
   return <div className="quality-access" data-testid="continuous-quality">

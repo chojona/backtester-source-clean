@@ -6,8 +6,10 @@ from datetime import date, datetime
 from functools import lru_cache
 from typing import Annotated, Literal
 
+from duckdb import IOException
 from fastapi import Depends, FastAPI, HTTPException, Query
 
+from .chart_window import chart_window, series_identity
 from .data import DataError, ResearchStore
 
 app = FastAPI(title='NQ Quant Research Terminal', version='0.3.0')
@@ -52,10 +54,12 @@ def health(db=Depends(store)):
 @app.get('/api/provenance')
 def provenance(db=Depends(store)):
     result = db.provenance()
+    result['chart_series'] = series_identity(db, db)
     if os.getenv('NQ_CONTINUOUS_ROOT'):
         continuous = chart_store(db, 'NQ1! Raw')
         result['continuous'] = {'build_id':continuous.manifest['build_id'], 'quality':continuous.quality,
-                                'policy':continuous.manifest['specification']}
+                                'policy':continuous.manifest['specification'],
+                                'chart_series':series_identity(db, continuous)}
     return result
 
 
@@ -90,6 +94,33 @@ def session_snapshot(contract: Contract, session: date, timeframe: Frame = '1m',
 
 
 app.get('/api/snapshot')(session_snapshot)
+
+
+@app.get('/api/chart/window')
+def historical_chart_window(
+    contract: Contract, timeframe: Frame = '1m', display: Literal['Globex', 'RTH'] = 'Globex',
+    opening_minutes: int = Query(30, ge=1, le=120), deviations: float = Query(1, ge=.25, le=5),
+    session: date | None = None, cursor: str | None = Query(None, max_length=256),
+    as_of: datetime | None = None, sessions: int = Query(20, ge=1, le=250),
+    start_sessions: int | None = Query(None, ge=1, le=250), db=Depends(store),
+):
+    selected = chart_store(db, contract)
+    def check_artifacts():
+        db.check_seal()
+        if selected is not db:
+            selected.check_seal()
+
+    try:
+        check_artifacts()
+        try:
+            page = chart_window(db, selected, contract, timeframe, display, opening_minutes, deviations,
+                                as_of, session, cursor, sessions, start_sessions)
+        except DataError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        check_artifacts()
+        return page
+    except (OSError, IOException, DataError) as exc:
+        raise HTTPException(503, 'Chart artifacts changed after verification; restart with an intact release') from exc
 
 
 @app.get('/api/statistics')

@@ -3,6 +3,7 @@ test("real historical session, timeframes, replay, and explorer", async ({
   page,
   request,
 }, testInfo) => {
+  test.skip(process.env.NQ_BROWSER_RELEASE !== "1", "Requires the external sealed source release");
   const health = await request.get("/api/health");
   expect(health.ok()).toBeTruthy();
   const errors: string[] = [];

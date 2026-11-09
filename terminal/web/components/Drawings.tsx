@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import {createPortal} from "react-dom";
 import {
   IChartApi,
@@ -7,14 +7,14 @@ import {
   UTCTimestamp,
   Logical,
 } from "lightweight-charts";
-import { Snapshot } from "@/lib/types";
+import type { Snapshot, Bar } from "@/lib/types";
+import type { SeriesIdentity } from "@/lib/chartWindow";
 import {
   Indicators,
   Anchor,
   Drawing,
-  readLocal,
-  writeLocal,
-  validDrawing,
+  readDrawings,
+  writeDrawings,
   visibleDrawings,
   project,
 } from "@/lib/workspace";
@@ -24,14 +24,18 @@ export default function Drawings({
   data,
   settings,
   toolbarTarget,
+  chartSeries,
+  replay,
 }: {
   chart: IChartApi;
   series: ISeriesApi<"Candlestick">;
   data: Snapshot | null;
   settings: Indicators;
   toolbarTarget?: HTMLElement|null;
+  chartSeries?: SeriesIdentity;
+  replay: boolean;
 }) {
-  const [objects, setObjects] = useState<Drawing[]>([]),
+  const [stored, setStored] = useState<{ key: string; drawings: Drawing[] }>({ key: "", drawings: [] }),
     [tool, setTool] = useState("select"),
     [selected, setSelected] = useState(""),
     [pending, setPending] = useState<Anchor | null>(null),
@@ -40,19 +44,30 @@ export default function Drawings({
     [warning, setWarning] = useState("");
   const svg = useRef<SVGSVGElement>(null),
     drag = useRef<{ id: string; index: number } | null>(null);
-  const key = data
-    ? `nq:v2:drawings:${data.contract}:${data.session}:${data.display || "Globex"}`
+  const adjusted = data?.contract === "NQ1! Adjusted";
+  const key = data && chartSeries
+    ? "nq:v3:drawings:" + JSON.stringify([data.contract, data.display, chartSeries.release_id,
+        chartSeries.build_id, chartSeries.artifact_id])
     : "";
+  const objects = key && stored.key === key ? stored.drawings : [];
   const asOf = data ? Date.parse(data.as_of) / 1000 : -Infinity;
-  useEffect(() => {
-    const raw = readLocal<Drawing[]>(key, []);
-    setObjects(Array.isArray(raw) ? raw.filter(validDrawing) : []);
+  useLayoutEffect(() => {
+    if (!key || !data || stored.key === key) return;
+    const legacy = adjusted ? null : "nq:v2:drawings:" + data.contract + ":";
+    setStored({ key, drawings: readDrawings(key, legacy, data.display) });
     setSelected("");
     setPending(null);
-  }, [key]);
+    drag.current = null;
+  }, [key, data, adjusted, stored.key]);
+  useLayoutEffect(() => {
+    setPending(null);
+    setSelected("");
+    drag.current = null;
+  }, [replay, data?.session, data?.timeframe]);
   const update = (next: Drawing[]) => {
-    setObjects(next);
-    if (key && !writeLocal(key, next))
+    if (!key) return;
+    setStored({ key, drawings: next });
+    if (!writeDrawings(key, next))
       setWarning("Local storage unavailable; drawings last for this visit.");
   };
   useEffect(() => {
@@ -101,32 +116,45 @@ export default function Drawings({
     return () => document.removeEventListener("keydown", fn);
   });
   const bars = data?.bars || [];
+  const indexAfter = (time: number) => {
+    let left = 0, right = bars.length;
+    while (left < right) {
+      const middle = Math.floor((left + right) / 2);
+      if (bars[middle].time <= time) left = middle + 1;
+      else right = middle;
+    }
+    return left;
+  };
+  const barAt = (time: number): Bar | undefined => {
+    const bar = bars[indexAfter(time) - 1];
+    return bar && time < bar.available_at ? bar : undefined;
+  };
   const timeX = (t: number) => {
-    const ts = chart.timeScale(),
-      exact = ts.timeToCoordinate(t as UTCTimestamp);
+    const ts = chart.timeScale(), exact = ts.timeToCoordinate(t as UTCTimestamp);
     if (exact !== null) return exact;
-    if (!bars.length) return null;
-    let i = bars.findIndex((b) => b.time > t);
-    if (i < 0) i = bars.length;
-    const left = Math.max(0, Math.min(bars.length - 2, i - 1)),
-      a = bars[left],
-      b = bars[left + 1];
-    return ts.logicalToCoordinate(
-      (left + (t - a.time) / (b ? b.time - a.time : 60)) as Logical,
-    );
+    const i = indexAfter(t);
+    const a = bars[i - 1], b = bars[i];
+    if (!a || t >= a.available_at) return null;
+    const first = ts.timeToIndex(a.time as UTCTimestamp);
+    const second = b && ts.timeToIndex(b.time as UTCTimestamp);
+    if (first === null) return null;
+    return ts.logicalToCoordinate((first + (second == null ? 0 :
+      (second - first) * (t - a.time) / (b.time - a.time))) as Logical);
   };
   const point = (e: React.PointerEvent): Anchor | null => {
     const r = svg.current!.getBoundingClientRect(),
       x = e.clientX - r.left,
       y = e.clientY - r.top;
     if (x > r.width - 60 || y > r.height * 0.8) return null;
-    const logical = chart.timeScale().coordinateToLogical(x),
+    const time = chart.timeScale().coordinateToTime(x),
       price = series.coordinateToPrice(y);
-    if (logical === null || price === null || !bars.length) return null;
-    const b = bars[Math.max(0, Math.min(bars.length - 1, Math.round(logical)))];
-    return { time: b.time, price: Math.round(price * 100) / 100 };
+    if (typeof time !== "number" || price === null || !barAt(time) || (replay && time > asOf)) return null;
+    return { time, price: Math.round(price * 100) / 100 };
   };
-  const visible = visibleDrawings(objects, asOf),
+  const sameBlock = (points: [Anchor, Anchor], block: number | undefined) =>
+    !adjusted || block !== undefined && points.every(anchor => barAt(anchor.time)?.adjustment_block_id === block);
+  const visible = (replay ? visibleDrawings(objects, asOf) : data ? objects : []).filter(
+    drawing => sameBlock(drawing.points, drawing.adjustmentBlock)),
     active = visible.find((d) => d.id === selected);
   const toolbar = (
 <div className="drawing-toolbar">
@@ -192,15 +220,15 @@ export default function Drawings({
                       value={new Date(p.time * 1000).toISOString().slice(0, 16)}
                       onChange={(e) => {
                         const time = Date.parse(e.target.value + "Z") / 1000;
-                        if (!Number.isFinite(time) || time > asOf) return;
+                        if (!Number.isFinite(time) || (replay && time > asOf)) return;
+                        const points = active.points.map((anchor, j) => j === i ? { ...anchor, time } : anchor) as [Anchor, Anchor];
+                        if (!sameBlock(points, active.adjustmentBlock)) return;
                         update(
                           objects.map((d) =>
                             d.id === active.id
                               ? {
                                   ...d,
-                                  points: d.points.map((a, j) =>
-                                    j === i ? { ...a, time } : a,
-                                  ) as [Anchor, Anchor],
+                                  points,
                                 }
                               : d,
                           ),
@@ -258,10 +286,14 @@ export default function Drawings({
             setPending(p);
             return;
           }
+          const points: [Anchor, Anchor] = [pending || p, p];
+          const adjustmentBlock = adjusted ? barAt(p.time)?.adjustment_block_id : undefined;
+          if (!sameBlock(points, adjustmentBlock)) return;
           const d: Drawing = {
             id: crypto.randomUUID(),
             type: tool as Drawing["type"],
-            points: [pending || p, p],
+            points,
+            adjustmentBlock,
             createdAt: asOf,
             visible: true,
             color: "#8bb8f4",
@@ -274,7 +306,8 @@ export default function Drawings({
         onPointerMove={(e) => {
           if (!drag.current) return;
           const p = point(e);
-          if (p)
+          const drawing = visible.find(d => d.id === drag.current?.id);
+          if (p && drawing && (!adjusted || barAt(p.time)?.adjustment_block_id === drawing.adjustmentBlock))
             update(
               objects.map((d) =>
                 d.id === drag.current!.id

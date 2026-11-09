@@ -1,3 +1,5 @@
+import type { SeriesIdentity } from "./chartWindow";
+
 export type Frame = "1m" | "5m" | "15m" | "30m" | "1h" | "daily";
 export type Bar = {
   time: number;
@@ -88,6 +90,8 @@ export type Provenance = {
     policy: Record<string, string | boolean>;
   };
   availability: string;
+  chart_series?: SeriesIdentity;
+  continuous?: { chart_series: SeriesIdentity };
 };
 export async function api<T>(path: string, signal?: AbortSignal): Promise<T> {
   const r = await fetch(`/api/${path}`, { signal, cache: "no-store" });
