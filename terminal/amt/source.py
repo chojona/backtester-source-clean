@@ -96,7 +96,7 @@ class ObservationSource:
                 'unresolved_roll_ids': [row['roll_id'] for row in rolls if not self.as_of
                                         and row['roll_id'] in self.selected.quality['unresolved_rolls']]}
 
-    def load(self, first, last, cutoff):
+    def load(self, first, last, cutoff, starts_at=None):
         last_elapsed = min(last, trading_date(cutoff))
         if first > last_elapsed:
             return []
@@ -121,19 +121,25 @@ class ObservationSource:
                 raise DataError('AMT observation limit exceeded')
             for row in rows:
                 by_day[row['trading_date']].append(row)
-        return [self.sample(meta, by_day[meta['trading_date']], cutoff) for meta in metadata
+        return [self.sample(meta, by_day[meta['trading_date']], cutoff, starts_at) for meta in metadata
                 if session_bounds(date.fromisoformat(meta['trading_date']), self.display)[0] <= cutoff]
 
-    def sample(self, meta, rows, cutoff):
+    def sample(self, meta, rows, cutoff, starts_at):
         day = date.fromisoformat(meta['trading_date'])
         start, end = session_bounds(day, self.display)
         globex_start, globex_end = session_bounds(day, 'Globex')
         ordinary = meta['ordinary_candidate_minutes']
         regime_known = ordinary in (1365, 1380)
         recess = (local_stamp(day, 16, 15), local_stamp(day, 16, 30))
-        expected = elapsed_minutes(start, end, cutoff)
+        window_start = start
+        if starts_at is not None and starts_at > start:
+            # An off-minute anchor starts with the next minute's observation.
+            window_start = starts_at.replace(second=0, microsecond=0)
+            if starts_at > window_start:
+                window_start += MINUTE
+        expected = elapsed_minutes(window_start, end, cutoff)
         if self.display == 'Globex' and ordinary == 1365:
-            expected -= elapsed_minutes(*recess, cutoff)
+            expected -= elapsed_minutes(max(window_start, recess[0]), recess[1], cutoff)
         admitted = meta['eligible_full_session'] and (self.continuous or meta['selected_contract'] == self.contract)
         fields = ('source_contract', 'segment_id', 'roll_id', 'adjustment_offset', 'adjustment_status', 'adjustment_block_id')
         bars, lineage, previous = [], None, None
@@ -153,17 +159,18 @@ class ObservationSource:
             volume = row['volume']
             if not low <= min(close, open_) <= max(close, open_) <= high or type(volume) is not int or volume < 0:
                 raise DataError('Invalid AMT source OHLCV')
-            if start <= stamp < end:
+            if window_start <= stamp < end:
                 bars.append(Bar(stamp, low, high, close, volume))
         if cutoff >= globex_end and admitted and len(rows) != ordinary:
             raise DataError('AMT manifest and observed session counts disagree')
-        complete = admitted and regime_known and cutoff >= end and len(bars) == expected
+        complete = admitted and regime_known and cutoff >= end and len(bars) == expected > 0
         status = ('complete_observed_grid' if complete else 'incomplete' if cutoff >= end
                   else 'developing')
         # Do not disclose a retrospective exclusion decision for an active prefix.
         if not admitted and cutoff >= globex_end:
             status = 'excluded'
         coverage = {'trading_date': day.isoformat(), 'display_start': start, 'display_end': end,
+                    'scope_start': min(end, window_start),
                     'elapsed_expected_minutes': expected if regime_known else None,
                     'observed_minutes': len(bars), 'status': status, 'calendar_status': meta['calendar_status'],
                     'complete': complete, 'developing': cutoff < end}

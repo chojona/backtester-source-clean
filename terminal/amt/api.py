@@ -112,3 +112,44 @@ def tpo(request: Annotated[TpoRequest, Query()], db=Depends(store)):
         return dict(envelope, tpo=make_tpo(samples, envelope['cutoff']['as_of'], request.display,
                     request.row_ticks, request.period_minutes, Fraction(str(request.value_fraction)),
                     request.representation, request.ib_minutes))
+
+
+class VwapRequest(Request):
+    scope: Literal['session', 'week', 'prior_week', 'month', 'prior_month', 'manual'] = 'session'
+    anchor: datetime | None = None
+    points_from: datetime | None = None
+    deviations: float = Query(1, ge=.25, le=5)
+
+
+@router.get('/vwap')
+def vwap(request: Annotated[VwapRequest, Query()], db=Depends(store)):
+    from datetime import timezone
+
+    from .model import trading_date
+    from .vwap import make_vwap
+
+    with reading(db, request) as source:
+        anchor, points_from = request.anchor, request.points_from
+        if (request.scope == 'manual') != (anchor is not None):
+            raise DataError('A manual VWAP requires an anchor; other VWAP scopes do not take one')
+        for stamp in (anchor, points_from):
+            if stamp is not None and (stamp.utcoffset() is None or not 1900 <= stamp.year <= 2200):
+                raise DataError('VWAP timestamps must include a timezone and a supported date')
+        anchor = anchor.astimezone(timezone.utc) if anchor else None
+        points_from = points_from.astimezone(timezone.utc) if points_from else None
+        options = {'anchor': anchor.isoformat() if anchor else None,
+                   'points_from': points_from.isoformat() if points_from else None,
+                   'deviations': request.deviations}
+        if anchor is not None:
+            first, last = scope_dates('range', request.session, trading_date(anchor), request.session)
+            if request.start is not None or request.end is not None:
+                raise DataError('Manual scope is bounded by anchor and session')
+            cutoff = source.as_of or session_bounds(last, request.display)[1]
+            if anchor > min(cutoff, session_bounds(last, request.display)[1]):
+                raise DataError('VWAP anchor is beyond the selected observation scope')
+            samples = source.load(first, last, cutoff, starts_at=anchor)
+            envelope = source.envelope('manual', first, last, cutoff, samples, options)
+        else:
+            samples, envelope = load_scope(source, request, options)
+        return dict(envelope, vwap=make_vwap(samples, anchor, envelope['cutoff']['as_of'],
+                                            request.deviations, points_from))
