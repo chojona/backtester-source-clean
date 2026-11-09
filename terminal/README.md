@@ -8,7 +8,7 @@ Local Next.js / TypeScript / Tailwind / Lightweight Charts frontend, backed by a
 
 The symbol selector now supports **NQ1! Raw** and **NQ1! Adjusted** when `NQ_CONTINUOUS_ROOT` points to a separate built release. See [continuous-series policy, rebuild and validation](CONTINUOUS.md). Individual contract files and scientific certification remain unchanged.
 
-Pan near either edge of an intraday continuous chart to load adjacent historical sessions. The selected session, drawings and replay context stay anchored. Use **Full history · daily** for the complete retrospective daily view. Switching from full history to intraday starts with 20 sessions.
+Pan near either edge of the chart to load adjacent historical sessions. The selected session, drawings and replay context stay anchored. Use **Full history · daily** for the complete retrospective daily view. Switching from full history to intraday starts with 20 sessions.
 
 ## Install and launch
 
@@ -46,7 +46,7 @@ For separate processes, export `NQ_DATA_ROOT` and run `.venv-terminal/bin/python
 
 The expected release has 2,141,265 eligible bars and 1,557 eligible full sessions, 2016-01-21 through 2026-10-06. Every chart query filters `eligible_full_session IS TRUE`, exact `contract`, and matching `selected_contract`. Session manifests must reconcile to observed counts. The full-session release is retrospectively QC eligible and **not strict certified**; original calendar and point-in-time limitations remain in provenance. Eligibility is not proof that a session or bar was historically published at that instant.
 
-DuckDB queries Parquet with date, contract, availability, and eligibility predicates. Only one session (at most 1,395 source minutes in this release) reaches the snapshot calculation. Range requests are limited to 32 dates, all on one explicit contract. No whole dataset is loaded into browser memory. Historical and derived data remain local. Drawings created at a later replay cutoff (or with later anchors) are hidden when rewinding; no future object coordinates are shown in the Objects menu. No brokerage or trade execution is implemented.
+DuckDB queries Parquet with date, contract, availability, and eligibility predicates. Exact-contract snapshots calculate a single session. The legacy range route is limited to 32 dates on one explicit contract. The chart's separate history route pages through whole sessions with at most 2,500 displayed candles per response. The browser keeps at most 30,000 candles and 32 pages. Continuous daily mode pages through the available history. Historical and derived data remain local. Drawings created at a later replay cutoff (or with later anchors) are hidden when rewinding; no future object coordinates are shown in the Objects menu. No brokerage or trade execution is implemented.
 
 ## Use
 
@@ -83,13 +83,15 @@ Interactive schema: **http://127.0.0.1:8000/docs**.
 | `GET /api/statistics` | Same selection and cutoff parameters as snapshot |
 | `GET /api/indicators` | Same parameters; points carry decision-time availability |
 | `GET /api/provenance` | Release summary, hashes, definitions, and limitations |
+| `GET /api/chart/window` | Required `contract` and either `session` or `cursor`. Optional `timeframe`, `display`, `as_of`, `opening_minutes`, `deviations`, `sessions`, and `start_sessions` on initial requests. Returns candles, session coverage, provenance, and older/newer cursors. |
 | `GET /api/rolls` | Required `contract`; explicit release roll records |
 
 Snapshot `cursor=0` exposes no current-session prices. Omitting cursor shows the full eligible historical session. Invalid contracts, excluded dates, unknown timeframes, invalid ranges, naive `as_of`, and out-of-bounds cursors return 422. Empty range results remain empty. Times in JSON include UTC offsets; chart labels are ET. Each range session and daily aggregate retains the exact requested contract identity.
 
 ## Verification
 
-Historical tests require the actual release and explicitly skip without `NQ_DATA_ROOT`:
+Historical tests use the sealed release. The continuous checks also require
+`NQ_CONTINUOUS_ROOT`. Keep both roots outside the repository.
 
 ```sh
 # Export the path configured in terminal/.env into this shell.
@@ -101,15 +103,57 @@ cd terminal/web
 npm run typecheck
 npm run build
 npx playwright install chromium
-# With both servers running:
-npm run test:smoke -- terminal.spec.ts v02.spec.ts continuous.spec.ts
-NQ_BROWSER_RELEASE=1 npm run test:smoke -- intraday.spec.ts -g 'release-backed'
+```
+
+Start the API from the repository root with both roots exported, and the
+production frontend from `terminal/web` in a separate shell.
+
+```sh
+.venv-terminal/bin/python -m uvicorn terminal.api:app --host 127.0.0.1 --port 8000
+```
+
+```sh
+cd terminal/web
+npm start
+```
+
+Run the browser checks from another shell in `terminal/web`.
+
+```sh
+NQ_BROWSER_RELEASE=1 npm run test:smoke -- terminal.spec.ts v02.spec.ts continuous.spec.ts intraday.spec.ts
+# Optional browser performance probe
+NQ_BROWSER_RELEASE=1 NQ_BROWSER_BENCHMARK=1 npm run test:smoke -- intraday.spec.ts -g 'repeated history'
 ```
 
 If Chromium already exists, `PLAYWRIGHT_CHROMIUM_EXECUTABLE=/absolute/path/to/chrome-headless-shell npm run test:smoke` uses it without downloading another copy.
 
 Tests compare real source rows to API candles, verify causal prefixes and aggregation across all six timeframes, independently recompute VWAP and OR, check exact contract and eligibility rejection, timestamp availability at close, source hash failure, pagination, bounded requests, error recovery, responsive layout, and browser replay controls. Existing research tests remain separate (`python -m pytest tests`). Browser screenshots and traces are ignored generated outputs under `terminal/web/test-results/`.
 
-The synthetic CI path uses an ephemeral, formula-only release with the same API and production frontend. See the [development guide](../docs/DEVELOPMENT.md#what-ci-runs) for the separate commands. The [v0.2 report](IMPLEMENTATION_V0_2.md) records the baseline.
+For the formula-only lane, start the fixture API and production frontend in separate shells after installing the dependencies.
+
+```sh
+# Repository root
+unset NQ_DATA_ROOT NQ_CONTINUOUS_ROOT NQ_BROWSER_RELEASE
+.venv-terminal/bin/python -m pytest -q terminal/tests
+.venv-terminal/bin/python -m terminal.tests.serve_synthetic
+```
+
+```sh
+# Second shell, from the repository root
+cd terminal/web
+npm ci
+npm run typecheck
+npm run build
+npx playwright install chromium
+npm start
+```
+
+```sh
+# Third shell, from the repository root
+cd terminal/web
+NQ_BROWSER_FIXTURE=1 npm run test:smoke
+```
+
+The v0.2 baseline, Phase 1 test results and API benchmark conditions are recorded separately. [v0.2 implementation](IMPLEMENTATION_V0_2.md) · [Phase 1 verification](PHASE1_VERIFICATION.md)
 
 For the broader repository, see the [documentation index](../README.md#start-here), [architecture](../docs/ARCHITECTURE.md), and [development guide](../docs/DEVELOPMENT.md).
