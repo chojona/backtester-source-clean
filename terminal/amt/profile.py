@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections import defaultdict
+from collections import Counter, defaultdict
 from fractions import Fraction
 from typing import Iterable
 
@@ -28,32 +28,38 @@ def price_span(first: int, last: int) -> range:
 
 def weights(bars: Iterable[Bar], method: str, width: int) -> dict[int, Fraction]:
     """Uniform edge contributions and interior range updates, in exact units."""
-    changes = defaultdict(Fraction)
-    edges = defaultdict(Fraction)
+    if method not in METHODS:
+        raise DataError('Unknown OHLCV volume allocation')
+    # Group equal denominators before summing the exact rational shares.
+    changes = defaultdict(Counter)
+    edges = defaultdict(Counter)
     first = last = None
     for bar in bars:
         if not bar.volume:
             continue
-        low = high = row_index(bar.typical_tick, width)
         if method == 'uniform':
             low, high = row_index(bar.low, width), row_index(bar.high, width)
-        if low == high:
-            edges[low] += bar.volume
         else:
-            share = Fraction(bar.volume, bar.high - bar.low + 1)
-            edges[low] += share * ((low + 1) * width - bar.low)
-            edges[high] += share * (bar.high - high * width + 1)
-            changes[low + 1] += share * width
-            changes[high] -= share * width
+            low = high = row_index(bar.typical_tick, width)
         first = low if first is None else min(low, first)
         last = high if last is None else max(high, last)
+        price_span(first, last)
+        if low == high:
+            edges[low][1] += bar.volume
+        else:
+            ticks = bar.high - bar.low + 1
+            edges[low][ticks] += bar.volume * ((low + 1) * width - bar.low)
+            edges[high][ticks] += bar.volume * (bar.high - high * width + 1)
+            if high > low + 1:
+                changes[low + 1][ticks] += bar.volume * width
+                changes[high][ticks] -= bar.volume * width
     if first is None:
         return {}
     running = Fraction()
     result = {}
     for index in price_span(first, last):
-        running += changes[index]
-        result[index] = edges[index] + running
+        running += sum(Fraction(value, ticks) for ticks, value in changes.get(index, {}).items() if value)
+        result[index] = running + sum(Fraction(value, ticks) for ticks, value in edges.get(index, {}).items())
     return result
 
 

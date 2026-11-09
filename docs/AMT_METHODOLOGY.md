@@ -97,7 +97,9 @@ there is no VWAP until positive volume. A manual anchor includes the first
 minute whose start is at or after the supplied timestamp, even if the anchor
 falls between minutes. An anchor price is a UI annotation. Session, week and
 month resets use the scopes above. Calculation always starts at the scope
-boundary or manual anchor and is independent of chart pages. Missing minutes
+boundary or manual anchor and is independent of chart pages. An optional
+`points_from` timestamp filters output by minute close after calculating the
+full prefix. Missing minutes
 do not add weight. Disconnected observations are marked so the UI can break
 the line across gaps. Points are timestamped at minute close; when rendering
 an aggregate candle, use only values available by that candle's close.

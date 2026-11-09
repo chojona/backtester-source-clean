@@ -66,7 +66,24 @@ Replay requests use a server-side observed-minute cursor. An optional timezone-a
 
 VWAP resets at the ordinary session open and uses cumulative `HLC3 × volume / volume`, an OHLCV approximation rather than trade-level VWAP. Aggregated VWAP uses the last known source-minute VWAP. Previous high/low comes only from the manifest's exact prior candidate date on the same selected contract, requiring a complete observed grid with no boundary issue; unavailable context stays null. Prior-session records also respect the cutoff. No context is borrowed across a roll or skipped date.
 
-Opening range defaults to [09:30,10:00) **America/New_York**, honoring DST. Its duration is configurable from 1 to 120 minutes. It remains absent before 09:30 and developing until its configured end. VWAP bands use volume-weighted population deviation of observed one-minute HLC3 around VWAP; the multiplier is configurable from 0.25 to 5. RTH display filters observed prices to [09:30,16:00) ET before aggregation and VWAP; the session cursor still counts all eligible observed minutes. Previous-session RTH extrema retain the exact prior-candidate context gate. Developing higher-timeframe candles contain only completed source minutes; their current VWAP and OR values are known at the returned `available_at`, not necessarily at the bucket's displayed open timestamp. Realized volatility is `100 × sqrt(sum(log(C_t/C_(t-1))²))` across consecutive observed one-minute timestamps within the session, unannualized; gaps and cross-session returns are excluded. No volume profile is implemented.
+Opening range defaults to [09:30,10:00) **America/New_York**, honoring DST. Its duration is configurable from 1 to 120 minutes. It remains absent before 09:30 and developing until its configured end. VWAP bands use volume-weighted population deviation of observed one-minute HLC3 around VWAP; the multiplier is configurable from 0.25 to 5. RTH display filters observed prices to [09:30,16:00) ET before aggregation and VWAP; the session cursor still counts all eligible observed minutes. Previous-session RTH extrema retain the exact prior-candidate context gate. Developing higher-timeframe candles contain only completed source minutes; their current VWAP and OR values are known at the returned `available_at`, not necessarily at the bucket's displayed open timestamp. Realized volatility is `100 × sqrt(sum(log(C_t/C_(t-1))²))` across consecutive observed one-minute timestamps within the session, unannualized; gaps and cross-session returns are excluded.
+
+## Auction analytics
+
+Open **Auction analytics** beside the drawing controls. Enable Volume Profile
+and choose an allocation and scope. The profile shows estimated POC, VAH, VAL,
+HVN and LVN from observed one-minute OHLCV. Choose TPO blocks or letters for the
+selected session and its RTH Initial Balance. Prior levels require a reconciled
+prior period in the same price coordinate. The panel includes coverage,
+observation cutoff and source hashes for each displayed result.
+
+Choose **Manual anchor** under Advanced VWAP, then **Select anchor on chart**.
+Click a candle at the desired price. You can edit the UTC timestamp and
+annotation price afterward. Session, week and month VWAPs also support deviation
+bands. Settings and the anchor persist within the verified symbol, display and
+adjustment block across timeframes. Replay recomputes from the snapshot cutoff.
+See [AMT methodology](../docs/AMT_METHODOLOGY.md) and
+[Phase 2 verification](PHASE2_VERIFICATION.md).
 
 ## API
 
@@ -85,6 +102,17 @@ Interactive schema: **http://127.0.0.1:8000/docs**.
 | `GET /api/provenance` | Release summary, hashes, definitions, and limitations |
 | `GET /api/chart/window` | Required `contract` and either `session` or `cursor`. Optional `timeframe`, `display`, `as_of`, `opening_minutes`, `deviations`, `sessions`, and `start_sessions` on initial requests. Returns candles, session coverage, provenance, and older/newer cursors. |
 | `GET /api/rolls` | Required `contract`; explicit release roll records |
+| `GET /api/amt/profile` | Session or composite volume estimate, value area, nodes and optional model comparison |
+| `GET /api/amt/tpo` | Period occupancy, value area, RTH Initial Balance and optional block or letter ranges |
+| `GET /api/amt/vwap` | Session, manual, week or month weighted moments and bands. `points_from` trims output without resetting moments. |
+| `GET /api/amt/context` | Descriptive value, prior overlap and migration, Initial Balance extension, and range location |
+| `GET /api/amt/capabilities` | Supported methods, scope limits and replay eligibility |
+
+AMT calculations take `contract`, a `session` trading date, optional
+`display` and `scope`, and timezone-aware `as_of` for the observation cutoff.
+Use `start` and `end` for selected date ranges. Raw composites crossing a
+contract segment and adjusted composites crossing an independent block return
+422. Replay and explicit `as_of` are unavailable for adjusted data.
 
 Snapshot `cursor=0` exposes no current-session prices. Omitting cursor shows the full eligible historical session. Invalid contracts, excluded dates, unknown timeframes, invalid ranges, naive `as_of`, and out-of-bounds cursors return 422. Empty range results remain empty. Times in JSON include UTC offsets; chart labels are ET. Each range session and daily aggregate retains the exact requested contract identity.
 

@@ -1,33 +1,53 @@
 """Read-only, bounded auction statistics endpoints."""
 from contextlib import contextmanager
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from fractions import Fraction
+import re
 from typing import Annotated, Literal
 
 from duckdb import IOException
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel
+from pydantic import BaseModel, BeforeValidator
 
-from terminal.api import chart_store, store
 from terminal.data import DataError
+from terminal.stores import CONTRACT_PATTERN, chart_store, store
 
-from .model import session_bounds
-from .profile import make_profile
+from .context import profile_context
+from .model import MAX_OBSERVATIONS, MAX_PRICE_ROWS, TICK_SIZE, VERSION, session_bounds, trading_date
+from .profile import METHODS, VOLUME_SCALE, make_profile, value_area, weights
 from .source import ObservationSource, Scope, scope_dates
+from .tpo import make_tpo
+from .vwap import make_vwap
 
 router = APIRouter(prefix='/api/amt', tags=['auction market theory'])
+
+
+def calendar_date(value):
+    if isinstance(value, str) and not re.fullmatch(r'\d{4}-\d{2}-\d{2}', value):
+        raise ValueError('Use an ISO trading date (YYYY-MM-DD)')
+    return value
+
+
+def iso_timestamp(value):
+    if isinstance(value, str) and not re.match(r'^\d{4}-\d{2}-\d{2}[Tt ]', value):
+        raise ValueError('Use an ISO timestamp with a timezone')
+    return value
+
+
+CalendarDate = Annotated[date, BeforeValidator(calendar_date)]
+ObservationTime = Annotated[datetime, BeforeValidator(iso_timestamp)]
 
 
 class Request(BaseModel):
     model_config = {'extra': 'forbid'}
 
-    contract: str = Query(pattern=r'^NQ(?:[HMUZ][0-9]{1,2}|1! (?:Raw|Adjusted))$')
-    session: date
+    contract: str = Query(pattern=CONTRACT_PATTERN)
+    session: CalendarDate
     display: Literal['Globex', 'RTH'] = 'Globex'
     scope: Scope = 'session'
-    start: date | None = None
-    end: date | None = None
-    as_of: datetime | None = None
+    start: CalendarDate | None = None
+    end: CalendarDate | None = None
+    as_of: ObservationTime | None = None
     replay: bool = False
 
 
@@ -104,8 +124,6 @@ class TpoRequest(Request):
 
 @router.get('/tpo')
 def tpo(request: Annotated[TpoRequest, Query()], db=Depends(store)):
-    from .tpo import make_tpo
-
     options = request.model_dump(exclude=set(Request.model_fields))
     with reading(db, request) as source:
         samples, envelope = load_scope(source, request, options)
@@ -116,18 +134,13 @@ def tpo(request: Annotated[TpoRequest, Query()], db=Depends(store)):
 
 class VwapRequest(Request):
     scope: Literal['session', 'week', 'prior_week', 'month', 'prior_month', 'manual'] = 'session'
-    anchor: datetime | None = None
-    points_from: datetime | None = None
+    anchor: ObservationTime | None = None
+    points_from: ObservationTime | None = None
     deviations: float = Query(1, ge=.25, le=5)
 
 
 @router.get('/vwap')
 def vwap(request: Annotated[VwapRequest, Query()], db=Depends(store)):
-    from datetime import timezone
-
-    from .model import trading_date
-    from .vwap import make_vwap
-
     with reading(db, request) as source:
         anchor, points_from = request.anchor, request.points_from
         if (request.scope == 'manual') != (anchor is not None):
@@ -163,8 +176,6 @@ class ContextRequest(Request):
 
 
 def previous_value(source, first, scope, cutoff, coordinate, options, fraction):
-    from .profile import value_area, weights
-
     if scope in ('week', 'prior_week', 'month', 'prior_month'):
         kind = 'prior_week' if 'week' in scope else 'prior_month'
         start, end = scope_dates(kind, first, None, None)
@@ -194,9 +205,6 @@ def previous_value(source, first, scope, cutoff, coordinate, options, fraction):
 
 @router.get('/context')
 def context(request: Annotated[ContextRequest, Query()], db=Depends(store)):
-    from .context import profile_context
-    from .profile import value_area, weights
-
     options = request.model_dump(exclude=set(Request.model_fields))
     fraction = Fraction(str(request.value_fraction))
     with reading(db, request) as source:
@@ -213,9 +221,6 @@ def context(request: Annotated[ContextRequest, Query()], db=Depends(store)):
 
 @router.get('/capabilities')
 def capabilities():
-    from .model import MAX_OBSERVATIONS, MAX_PRICE_ROWS, TICK_SIZE, VERSION
-    from .profile import METHODS, VOLUME_SCALE
-
     return {'methodology_version': VERSION, 'input': 'sealed one-minute NQ OHLCV',
             'tick_size': TICK_SIZE, 'volume_scale': VOLUME_SCALE,
             'profile_methods': METHODS, 'tpo_classification': 'ohlcv_bar_range_tpo_estimate',

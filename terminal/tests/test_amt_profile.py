@@ -88,7 +88,7 @@ def test_profile_cutoff_quality_and_provenance(amt_client):
 
 @pytest.mark.parametrize('overrides', [
     dict(row_ticks=0), dict(method='trade_exact'), dict(replay='true'), dict(extra='1'),
-    dict(as_of='2026-03-13T14:30'), dict(value_fraction='nan'), dict(scope='range'),
+    dict(as_of='2026-03-13T14:30'), dict(as_of='1773412260'), dict(session='2026-03-13T00:00:00'), dict(value_fraction='nan'), dict(scope='range'),
     dict(contract='NQ1! Adjusted', as_of='2026-03-13T14:31:00Z'),
     dict(scope='range', start='2026-03-12', end='2026-03-19', contract='NQ1! Raw'),
     dict(scope='range', start='2026-03-12', end='2026-03-19', contract='NQ1! Adjusted'),
@@ -96,3 +96,40 @@ def test_profile_cutoff_quality_and_provenance(amt_client):
 def test_profile_rejects_unsafe_or_invalid_requests(amt_client, overrides):
     params = dict(contract='NQH26', session='2026-03-13') | overrides
     assert amt_client.get('/api/amt/profile', params=params).status_code == 422
+
+
+@pytest.mark.parametrize('corruption', ['foreign_contract', 'duplicate', 'off_grid', 'future'])
+def test_observation_guard_rejects_inconsistent_source_rows(amt_client, monkeypatch, corruption):
+    from datetime import timedelta
+    from terminal.data import ResearchStore
+
+    original = ResearchStore.query
+
+    def query(self, sql, params=()):
+        rows = original(self, sql, params)
+        if 'NULL AS adjustment_block_id' not in sql:
+            return rows
+        if corruption == 'foreign_contract':
+            rows[0]['source_contract'] = 'NQM26'
+        elif corruption == 'duplicate':
+            rows.insert(0, rows[0].copy())
+        elif corruption == 'off_grid':
+            rows[0]['high'] += .1
+        else:
+            rows[0]['timestamp_utc'] += timedelta(minutes=5)
+        return rows
+
+    monkeypatch.setattr(ResearchStore, 'query', query)
+    response = amt_client.get('/api/amt/profile', params=dict(
+        contract='NQH26', session='2026-03-13', as_of='2026-03-13T14:31:00Z'))
+    assert response.status_code == 422, response.text
+
+
+def test_amt_rejects_changed_verified_files(amt_client):
+    params = dict(contract='NQH26', session='2026-03-13')
+    assert amt_client.get('/api/amt/profile', params=params).status_code == 200
+    with (store().root / 'research.parquet').open('ab') as file:
+        file.write(b'changed after verification')
+    response = amt_client.get('/api/amt/profile', params=params)
+    assert response.status_code == 503
+    assert 'changed after verification' in response.text
