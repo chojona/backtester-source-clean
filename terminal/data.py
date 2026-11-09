@@ -27,10 +27,23 @@ def digest(path: Path) -> str:
     return h.hexdigest()
 
 
+def file_stamp(path: Path):
+    stat = path.stat()
+    return stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns
+
+
+def check_seal(stamps):
+    if any(file_stamp(path) != stamp for path, stamp in stamps.items()):
+        raise DataError('A verified chart artifact changed')
+
+
 class ResearchStore:
     def __init__(self, root: str | Path):
         self.root = Path(root).expanduser().resolve()
-        seal = json.loads((self.root / 'SUCCESS.json').read_text())
+        manifest = self.root / 'SUCCESS.json'
+        self._stamps = {manifest: file_stamp(manifest)}
+        seal = json.loads(manifest.read_text())
+        self.sealed_outputs = seal['outputs']
         if seal['version'] != VERSION:
             raise DataError(f'Expected sealed {VERSION} release')
         self.hashes = {}
@@ -38,13 +51,19 @@ class ResearchStore:
                      'selected-observations-with-flags.parquet', 'contract-rolls.parquet',
                      'summary.json', 'input-bindings.json'):
             expected = seal['outputs'][name]
-            if digest(self.root / name) != expected:
+            path = self.root / name
+            self._stamps[path] = file_stamp(path)
+            if digest(path) != expected:
                 raise DataError(f'Source hash mismatch: {name}')
             self.hashes[name] = expected
         self.summary = json.loads((self.root / 'summary.json').read_text())
         if self.summary['version'] != VERSION:
             raise DataError('Summary version mismatch')
+        self.check_seal()
         # Only paths and manifest metadata are retained; OHLCV stays in Parquet.
+
+    def check_seal(self):
+        check_seal(self._stamps)
 
     def query(self, sql: str, params=()):
         with duckdb.connect(':memory:') as con:
@@ -109,93 +128,47 @@ class ResearchStore:
         if len({r['timestamp_utc'] for r in rows}) != len(rows):
             raise DataError('Duplicate observed timestamps')
         cutoff = rows[-1]['timestamp_utc'] + timedelta(minutes=1) if rows else min(as_of, bounds['start']) if as_of else bounds['start']
-        previous = self.query('''SELECT min(low) AS low, max(high) AS high, count(*) AS n
-          FROM context WHERE trading_date=? AND contract=? AND selected_contract=?
-          AND full_grid_observed IS TRUE AND boundary_unresolved IS FALSE
-          AND CAST(timestamp_utc AS TIMESTAMPTZ) + INTERVAL 1 MINUTE <= ?''',
-          [meta[0]['prior_candidate_date'], contract, contract, cutoff])[0]
-        previous_meta = self.query('''SELECT ordinary_candidate_minutes FROM eligibility
-          WHERE trading_date=? AND selected_contract=? AND full_grid_observed IS TRUE''',
-          [meta[0]['prior_candidate_date'], contract])
-        previous = ({'high': previous['high'], 'low': previous['low'], 'date': meta[0]['prior_candidate_date']}
-                    if previous_meta and previous['n'] == previous_meta[0]['ordinary_candidate_minutes']
-                    else {'high': None, 'low': None, 'date': None})
         observed_cursor = len(rows)
-        rth_start = datetime.combine(session, datetime.min.time(), ET).replace(hour=9, minute=30)
-        rth_end = rth_start.replace(hour=16, minute=0)
-        opening_end = rth_start + timedelta(minutes=opening_minutes)
-        if display == 'RTH':
-            rows = [r for r in rows if rth_start <= r['timestamp_utc'] < rth_end]
-            if previous['date'] is not None:
-                prior_day = date.fromisoformat(str(previous['date']))
-                prior_open = datetime.combine(prior_day, datetime.min.time(), ET).replace(hour=9, minute=30)
-                prior_close = prior_open.replace(hour=16, minute=0)
-                levels = self.query('''SELECT min(low) AS low, max(high) AS high FROM context
-                    WHERE trading_date=? AND contract=? AND selected_contract=?
-                    AND full_grid_observed IS TRUE AND boundary_unresolved IS FALSE
-                    AND CAST(timestamp_utc AS TIMESTAMPTZ)>=? AND CAST(timestamp_utc AS TIMESTAMPTZ)<?
-                    AND CAST(timestamp_utc AS TIMESTAMPTZ) + INTERVAL 1 MINUTE<=?''',
-                    [str(previous['date']), contract, contract, prior_open, prior_close, cutoff])[0]
-                previous.update(high=levels['high'], low=levels['low'])
-        pv = vol = rv = mean = m2 = 0.0
-        or_high = or_low = None
-        buckets = {}
-        prior = None
-        anchor = int((rth_start if display == 'RTH' else bounds['start']).timestamp())
-        span = FRAMES[timeframe] * 60
-        for r in rows:
-            stamp = r['timestamp_utc']
-            t = int(stamp.timestamp())
-            if prior and (stamp - prior['timestamp_utc']).total_seconds() == 60:
-                rv += math.log(r['close'] / prior['close']) ** 2
-            prior = r
-            typical = (r['high'] + r['low'] + r['close']) / 3
-            pv += typical * r['volume']
-            next_volume = vol + r['volume']
-            if r['volume'] > 0:
-                delta = typical - mean
-                mean += r['volume'] / next_volume * delta
-                m2 += r['volume'] * delta * (typical - mean)
-            vol = next_volume
-            local = stamp.astimezone(ET)
-            if rth_start <= stamp < opening_end:
-                or_high = max(or_high, r['high']) if or_high is not None else r['high']
-                or_low = min(or_low, r['low']) if or_low is not None else r['low']
-            bucket = anchor + ((t - anchor) // span) * span
-            if bucket not in buckets:
-                buckets[bucket] = {'time': bucket, 'open': r['open'], 'high': r['high'], 'low': r['low'],
-                                   'volume': 0, 'source_count': 0}
-            b = buckets[bucket]
-            b.update(high=max(b['high'], r['high']), low=min(b['low'], r['low']), close=r['close'],
-                     volume=b['volume'] + r['volume'], source_count=b['source_count'] + 1,
-                     vwap=pv / vol if vol else None, or_high=or_high, or_low=or_low,
-                     vwap_upper=mean + deviations * math.sqrt(max(0, m2/vol)) if vol else None,
-                     vwap_lower=mean - deviations * math.sqrt(max(0, m2/vol)) if vol else None,
-                     available_at=t + 60)
-        candles = list(buckets.values())
-        for b in candles:
-            # A final short session bucket is complete when the session is fully observed.
-            b['partial'] = b['time'] + span > cutoff.timestamp() and observed_cursor < total
-        stats = {'open': rows[0]['open'] if rows else None,
-                 'high': max((r['high'] for r in rows), default=None),
-                 'low': min((r['low'] for r in rows), default=None),
-                 'close': rows[-1]['close'] if rows else None,
-                 'volume': int(vol), 'vwap': pv / vol if vol else None,
-                 'realized_volatility': math.sqrt(rv) * 100, 'or_high': or_high, 'or_low': or_low,
-                 'or_complete': cutoff >= opening_end,
-                 'or_range': or_high - or_low if or_high is not None else None}
-        stats['range'] = stats['high'] - stats['low'] if rows else None
-        stats['vwap_deviation'] = stats['close'] - stats['vwap'] if rows and vol else None
+        previous = self.previous_levels(contract, meta[0]['prior_candidate_date'], cutoff, display)
+        candles, stats, boundaries = aggregate_exact(
+            rows, session, bounds['start'], timeframe, display, opening_minutes, deviations,
+            cutoff, observed_cursor < total,
+        )
         return {'contract': contract, 'session': session.isoformat(), 'timeframe': timeframe,
                 'cursor': observed_cursor, 'total_minutes': total, 'as_of': cutoff.isoformat(),
                 'session_start': bounds['start'].isoformat(), 'session_end': (bounds['last'] + timedelta(minutes=1)).isoformat(),
                 'bars': candles, 'stats': stats, 'previous': previous,
                 'display': display, 'opening_minutes': opening_minutes, 'deviations': deviations,
-                'boundaries': [int(bounds['start'].timestamp()), int(rth_start.timestamp()), int(rth_end.timestamp())],
+                'boundaries': boundaries,
                 'explorer': {'rows': candles[offset:offset + limit], 'total': len(candles), 'offset': offset, 'limit': limit},
                 'eligibility': {'eligible_full_session': True, 'strict_eligible': False,
                                 'calendar_status': meta[0]['calendar_status'], 'roll': meta[0]['roll'],
                                 'warmup_14_ready': meta[0]['warmup_14_ready']}}
+
+    def previous_levels(self, contract, prior_date, cutoff, display):
+        previous = self.query('''SELECT min(low) AS low, max(high) AS high, count(*) AS n
+          FROM context WHERE trading_date=? AND contract=? AND selected_contract=?
+          AND full_grid_observed IS TRUE AND boundary_unresolved IS FALSE
+          AND CAST(timestamp_utc AS TIMESTAMPTZ) + INTERVAL 1 MINUTE <= ?''',
+          [prior_date, contract, contract, cutoff])[0]
+        previous_meta = self.query('''SELECT ordinary_candidate_minutes FROM eligibility
+          WHERE trading_date=? AND selected_contract=? AND full_grid_observed IS TRUE''',
+          [prior_date, contract])
+        previous = ({'high': previous['high'], 'low': previous['low'], 'date': prior_date}
+                    if previous_meta and previous['n'] == previous_meta[0]['ordinary_candidate_minutes']
+                    else {'high': None, 'low': None, 'date': None})
+        if display == 'RTH' and previous['date'] is not None:
+            prior_day = date.fromisoformat(str(previous['date']))
+            prior_open = datetime.combine(prior_day, datetime.min.time(), ET).replace(hour=9, minute=30)
+            prior_close = prior_open.replace(hour=16, minute=0)
+            levels = self.query('''SELECT min(low) AS low, max(high) AS high FROM context
+                WHERE trading_date=? AND contract=? AND selected_contract=?
+                AND full_grid_observed IS TRUE AND boundary_unresolved IS FALSE
+                AND CAST(timestamp_utc AS TIMESTAMPTZ)>=? AND CAST(timestamp_utc AS TIMESTAMPTZ)<?
+                AND CAST(timestamp_utc AS TIMESTAMPTZ) + INTERVAL 1 MINUTE<=?''',
+                [str(previous['date']), contract, contract, prior_open, prior_close, cutoff])[0]
+            previous.update(high=levels['high'], low=levels['low'])
+        return previous
 
     def cursor_at(self, contract: str, session: date, clock: str):
         # Validate identity through the same eligibility and manifest reconciliation path.
@@ -216,3 +189,61 @@ class ResearchStore:
           AND selected_contract=? AND eligible_full_session IS TRUE
           AND CAST(timestamp_utc AS TIMESTAMPTZ) + INTERVAL 1 MINUTE <= ?''',
           [session.isoformat(), contract, contract, target])[0]['n']
+
+
+def aggregate_exact(rows, session, start, timeframe, display, opening_minutes, deviations, cutoff, incomplete):
+    """Aggregate a session prefix using the same semantics as the replay snapshot."""
+    rth_start = datetime.combine(session, datetime.min.time(), ET).replace(hour=9, minute=30)
+    rth_end = rth_start.replace(hour=16, minute=0)
+    opening_end = rth_start + timedelta(minutes=opening_minutes)
+    if display == 'RTH':
+        rows = [r for r in rows if rth_start <= r['timestamp_utc'] < rth_end]
+    pv = vol = rv = mean = m2 = 0.0
+    or_high = or_low = None
+    buckets = {}
+    prior = None
+    anchor = int((rth_start if display == 'RTH' else start).timestamp())
+    span = FRAMES[timeframe] * 60
+    for r in rows:
+        stamp = r['timestamp_utc']
+        t = int(stamp.timestamp())
+        if prior and (stamp - prior['timestamp_utc']).total_seconds() == 60:
+            rv += math.log(r['close'] / prior['close']) ** 2
+        prior = r
+        typical = (r['high'] + r['low'] + r['close']) / 3
+        pv += typical * r['volume']
+        next_volume = vol + r['volume']
+        if r['volume'] > 0:
+            delta = typical - mean
+            mean += r['volume'] / next_volume * delta
+            m2 += r['volume'] * delta * (typical - mean)
+        vol = next_volume
+        if rth_start <= stamp < opening_end:
+            or_high = max(or_high, r['high']) if or_high is not None else r['high']
+            or_low = min(or_low, r['low']) if or_low is not None else r['low']
+        bucket = anchor + ((t - anchor) // span) * span
+        if bucket not in buckets:
+            buckets[bucket] = {'time': bucket, 'open': r['open'], 'high': r['high'], 'low': r['low'],
+                               'volume': 0, 'source_count': 0}
+        b = buckets[bucket]
+        b.update(high=max(b['high'], r['high']), low=min(b['low'], r['low']), close=r['close'],
+                 volume=b['volume'] + r['volume'], source_count=b['source_count'] + 1,
+                 vwap=pv / vol if vol else None, or_high=or_high, or_low=or_low,
+                 vwap_upper=mean + deviations * math.sqrt(max(0, m2/vol)) if vol else None,
+                 vwap_lower=mean - deviations * math.sqrt(max(0, m2/vol)) if vol else None,
+                 available_at=t + 60)
+    candles = list(buckets.values())
+    for b in candles:
+        # A final short session bucket is complete when the session is fully observed.
+        b['partial'] = b['time'] + span > cutoff.timestamp() and incomplete
+    stats = {'open': rows[0]['open'] if rows else None,
+             'high': max((r['high'] for r in rows), default=None),
+             'low': min((r['low'] for r in rows), default=None),
+             'close': rows[-1]['close'] if rows else None,
+             'volume': int(vol), 'vwap': pv / vol if vol else None,
+             'realized_volatility': math.sqrt(rv) * 100, 'or_high': or_high, 'or_low': or_low,
+             'or_complete': cutoff >= opening_end,
+             'or_range': or_high - or_low if or_high is not None else None}
+    stats['range'] = stats['high'] - stats['low'] if rows else None
+    stats['vwap_deviation'] = stats['close'] - stats['vwap'] if rows and vol else None
+    return candles, stats, [int(start.timestamp()), int(rth_start.timestamp()), int(rth_end.timestamp())]

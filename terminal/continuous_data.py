@@ -9,13 +9,15 @@ from pathlib import Path
 import duckdb
 
 from .continuous import SYMBOLS, VERSION, literal, identity
-from .data import DataError, digest, ET, FRAMES
+from .data import DataError, check_seal, digest, file_stamp, ET, FRAMES
 
 
 class ContinuousStore:
     def __init__(self, root, original):
         self.root, self.original = Path(root).resolve(), original
-        self.manifest = json.loads((self.root/'SUCCESS.json').read_text())
+        manifest = self.root/'SUCCESS.json'
+        self._stamps = {manifest: file_stamp(manifest)}
+        self.manifest = json.loads(manifest.read_text())
         if self.manifest['version'] != VERSION or identity(self.manifest['specification']) != self.manifest['build_id']:
             raise DataError('Invalid continuous artifact version or identity')
         outputs = self.manifest['outputs']
@@ -24,7 +26,11 @@ class ContinuousStore:
         if missing := required.difference(outputs):
             raise DataError(f'Continuous seal is missing output hashes: {", ".join(sorted(missing))}')
         for name, expected in outputs.items():
-            if Path(name).name != name or digest(self.root/name) != expected:
+            if Path(name).name != name:
+                raise DataError('Changed continuous artifact: '+name)
+            path = self.root/name
+            self._stamps[path] = file_stamp(path)
+            if digest(path) != expected:
                 raise DataError('Changed continuous artifact: '+name)
         inputs = self.manifest['specification']['inputs']
         for name in ('summary.json','session-eligibility.parquet','selected-observations-with-flags.parquet','contract-rolls.parquet'):
@@ -33,8 +39,15 @@ class ContinuousStore:
         for name in ('session-eligibility.parquet', 'selected-gap-intervals.parquet'):
             if outputs[name] != inputs[name]:
                 raise DataError('Copied continuous metadata differs from its bound source: '+name)
+        source_outputs = getattr(original, 'sealed_outputs', original.hashes)
+        if inputs['selected-gap-intervals.parquet'] != source_outputs['selected-gap-intervals.parquet']:
+            raise DataError('Continuous gaps belong to a different source release')
         self.rolls = json.loads((self.root/'rollover-manifest.json').read_text())['rolls']
         self.quality = json.loads((self.root/'quality-report.json').read_text())
+        self.check_seal()
+
+    def check_seal(self):
+        check_seal(self._stamps)
 
     def query(self, symbol, sql, params=()):
         if symbol not in SYMBOLS:
@@ -117,6 +130,42 @@ class ContinuousStore:
         available=self.query(symbol,f'SELECT count(*) AS n FROM bars WHERE {where}',params)[0]['n']
         if timeframe!='daily' and available>200000:
             raise DataError('Intraday view limited to 200,000 source observations; shorten history or choose D')
+        candles, unresolved = self.chart_bars(symbol, where, params, timeframe, display,
+                                              opening_minutes, deviations, cursor is not None or as_of is not None)
+        gaps, gap_count, transitions = self.chart_metadata(
+            symbol, first, session.isoformat(), cutoff, cursor is not None or as_of is not None)
+        latest=[b for b in candles if b['trading_date']==session.isoformat()]
+        last=latest[-1] if latest else None
+        stats={k:None for k in ('open','high','low','close','volume','vwap','realized_volatility','or_high','or_low','or_complete','or_range','range','vwap_deviation')}
+        if latest:
+            stats.update(open=latest[0]['open'],high=max(b['high'] for b in latest),low=min(b['low'] for b in latest),
+                close=last['close'],volume=sum(b['volume'] for b in latest),vwap=last['vwap'],or_high=last['or_high'],or_low=last['or_low'])
+            stats['range']=stats['high']-stats['low'];stats['vwap_deviation']=last['close']-last['vwap'] if last['vwap'] else None
+        return {'contract':symbol,'session':session.isoformat(),'timeframe':timeframe,'display':display,
+            'bars':candles,'stats':stats,'previous':{'high':None,'low':None,'date':None},
+            'cursor':min(cursor,available) if cursor is not None else available if history_sessions==1 else total,'total_minutes':total,
+            'as_of':cutoff.isoformat(),'session_start':bounds['first'].isoformat() if total else cutoff.isoformat(),
+            'session_end':(bounds['last']+timedelta(minutes=1)).isoformat() if total else cutoff.isoformat(),
+            'boundaries':[],'opening_minutes':opening_minutes,'deviations':deviations,
+            'explorer':{'rows':candles[offset:offset+limit],'total':len(candles),'offset':offset,'limit':limit},
+            'eligibility':{'eligible_full_session':chosen[0]['eligible_full_session'],'strict_eligible':False,
+                'calendar_status':chosen[0]['calendar_status'],'roll':chosen[0]['roll'],'warmup_14_ready':chosen[0]['warmup_14_ready']},
+            'continuous':{'version':VERSION,'build_id':self.manifest['build_id'],'retrospective':adjusted,
+                'source_contract':chosen[0]['source_contract'],'history_sessions':len(chosen),
+                'session_dates':[s['trading_date'] for s in reversed(chosen)],'rolls':transitions,
+                'gaps':gaps,'gap_count':gap_count,'gaps_truncated':gap_count>len(gaps),'ineligible_sessions':[{k:s[k] for k in ('trading_date','quality_flags','absent_candidate_minutes')} for s in chosen if not s['eligible_full_session']],
+                'unadjustable_observations':unresolved,'performance_eligible':False,
+                'notice':'Retrospective additive blocks; unresolved rolls separate price anchors. Replay and strategy execution disabled.' if adjusted else 'Unadjusted observed prices; research exclusions retained. Roll jumps are not performance returns.'}}
+
+
+    def chart_bars(self, symbol, where, params, timeframe, display, opening_minutes, deviations, causal,
+                   max_rows=None):
+        adjusted = symbol == 'NQ1! Adjusted'
+        local = "timezone('America/New_York',CAST(timestamp_utc AS TIMESTAMPTZ))"
+        rth = f"hour({local})*60+minute({local}) BETWEEN 570 AND 959"
+        limit = 'LIMIT ?' if max_rows is not None else ''
+        if max_rows is not None:
+            params = [*params, max_rows + 1]
         if timeframe=='daily':
             # Aggregate source minutes in DuckDB, never load millions of bars into the browser.
             rows=self.query(symbol,f'''SELECT trading_date,source_contract,segment_id,roll_id,
@@ -126,10 +175,20 @@ class ContinuousStore:
                 first(adjustment_status) AS adjustment_status,first({"adjustment_block_id" if adjusted else "segment_id"}) AS adjustment_block_id,bool_and(eligible_full_session) AS eligible_full_session,
                 arg_min(raw_open,timestamp_utc) AS raw_open,max(raw_high) AS raw_high,min(raw_low) AS raw_low,arg_max(raw_close,timestamp_utc) AS raw_close,
                 sum((high+low+close)/3*volume)/nullif(sum(volume),0) AS daily_vwap
-                FROM bars WHERE {where} {'AND hour(timezone(\'America/New_York\',CAST(timestamp_utc AS TIMESTAMPTZ)))*60+minute(timezone(\'America/New_York\',CAST(timestamp_utc AS TIMESTAMPTZ))) BETWEEN 570 AND 959' if display=='RTH' else ''}
-                GROUP BY trading_date,source_contract,segment_id,roll_id ORDER BY timestamp_utc''',params)
+                FROM bars WHERE {where} {'AND ' + rth if display=='RTH' else ''}
+                GROUP BY trading_date,source_contract,segment_id,roll_id ORDER BY timestamp_utc {limit}''',params)
         else:
-            rows=self.query(symbol,f'SELECT * FROM bars WHERE {where} ORDER BY timestamp_utc',params)
+            # Keep the original segment anchor when dropping pre-RTH observations.
+            anchor = ('min(timestamp_utc) OVER (PARTITION BY trading_date,source_contract,segment_id)'
+                      if display == 'RTH' else 'NULL')
+            rows=self.query(symbol,f'''SELECT trading_date,source_contract,segment_id,roll_id,
+                timestamp_utc,open,high,low,close,volume,raw_open,raw_high,raw_low,raw_close,
+                adjustment_offset,adjustment_status,eligible_full_session,{anchor} AS anchor_timestamp
+                {',adjustment_block_id' if adjusted else ''}
+                FROM bars WHERE {where} {'QUALIFY open IS NULL OR ' + rth if display == 'RTH' else ''}
+                ORDER BY timestamp_utc {limit}''',params)
+        if max_rows is not None and len(rows) > max_rows:
+            raise DataError('Chart window exceeded the source observation bound')
         candles,buckets=[],{}
         previous_key=None
         pv=vol=0.0
@@ -143,15 +202,13 @@ class ContinuousStore:
             if key!=previous_key:
                 pv=vol=mean=m2=0.0
                 or_high=or_low=None
-                anchor=int(stamp.timestamp())
+                anchor=int((row.get('anchor_timestamp') or stamp).timestamp())
                 previous_key=key
             if row['open'] is None:
                 unresolved+=row.get('source_count',1)
                 continue
             local=stamp.astimezone(ET)
             minute=local.hour*60+local.minute
-            if display=='RTH' and timeframe!='daily' and not 570<=minute<960:
-                continue
             if timeframe=='daily':
                 bucket=int(stamp.timestamp())
                 vwap=row['daily_vwap'];sd=None
@@ -180,43 +237,26 @@ class ContinuousStore:
                 raw_high=max(b['raw_high'],row['raw_high']),raw_low=min(b['raw_low'],row['raw_low']),raw_close=row['raw_close'],
                 available_at=available_at,vwap=vwap,vwap_upper=vwap+deviations*sd if sd is not None and vwap is not None else None,
                 vwap_lower=vwap-deviations*sd if sd is not None and vwap is not None else None,
-                or_high=or_high,or_low=or_low,partial=available_at<bucket+span and (cursor is not None or as_of is not None))
+                or_high=or_high,or_low=or_low,partial=available_at<bucket+span and causal)
         candles=list(buckets.values())
-        gaps=self.query(symbol,'''SELECT trading_date,contract,start_utc,end_exclusive_utc,minutes,classification
+        return candles, unresolved
+
+    def chart_metadata(self, symbol, first, last, cutoff, causal):
+        gaps=self.query(symbol,'''SELECT trading_date,contract,start_utc,end_exclusive_utc,minutes,classification,
+            count(*) OVER () AS gap_count
             FROM gaps WHERE trading_date>=? AND trading_date<=? AND CAST(start_utc AS TIMESTAMPTZ)<? ORDER BY start_utc LIMIT 2000''',
-            [first,session.isoformat(),cutoff])
-        gap_count=self.query(symbol,'SELECT count(*) AS n FROM gaps WHERE trading_date>=? AND trading_date<=? AND CAST(start_utc AS TIMESTAMPTZ)<?',[first,session.isoformat(),cutoff])[0]['n']
+            [first,last,cutoff])
+        gap_count=gaps[0]['gap_count'] if gaps else 0
         for gap in gaps:
+            del gap['gap_count']
             gap['start_utc']=gap['start_utc'].isoformat()
             gap['end_exclusive_utc']=min(gap['end_exclusive_utc'],cutoff).isoformat()
             gap['minutes']=int((datetime.fromisoformat(gap['end_exclusive_utc'])-datetime.fromisoformat(gap['start_utc'])).total_seconds()/60)
-        transitions=[r for r in self.rolls if first<=r['trading_date']<=session.isoformat() and datetime.fromisoformat(r['decision_utc'])<=cutoff]
-        if cursor is not None or as_of is not None:
+        transitions=[r for r in self.rolls if first<=r['trading_date']<=last and datetime.fromisoformat(r['decision_utc'])<=cutoff]
+        if causal:
             # No future historical overlap references or backward offsets in raw replay.
             transitions=[{k:r[k] for k in ('roll_id','trading_date','decision_utc','old_contract','new_contract','policy_version')} for r in transitions]
-        latest=[b for b in candles if b['trading_date']==session.isoformat()]
-        last=latest[-1] if latest else None
-        stats={k:None for k in ('open','high','low','close','volume','vwap','realized_volatility','or_high','or_low','or_complete','or_range','range','vwap_deviation')}
-        if latest:
-            stats.update(open=latest[0]['open'],high=max(b['high'] for b in latest),low=min(b['low'] for b in latest),
-                close=last['close'],volume=sum(b['volume'] for b in latest),vwap=last['vwap'],or_high=last['or_high'],or_low=last['or_low'])
-            stats['range']=stats['high']-stats['low'];stats['vwap_deviation']=last['close']-last['vwap'] if last['vwap'] else None
-        return {'contract':symbol,'session':session.isoformat(),'timeframe':timeframe,'display':display,
-            'bars':candles,'stats':stats,'previous':{'high':None,'low':None,'date':None},
-            'cursor':min(cursor,available) if cursor is not None else available if history_sessions==1 else total,'total_minutes':total,
-            'as_of':cutoff.isoformat(),'session_start':bounds['first'].isoformat() if total else cutoff.isoformat(),
-            'session_end':(bounds['last']+timedelta(minutes=1)).isoformat() if total else cutoff.isoformat(),
-            'boundaries':[],'opening_minutes':opening_minutes,'deviations':deviations,
-            'explorer':{'rows':candles[offset:offset+limit],'total':len(candles),'offset':offset,'limit':limit},
-            'eligibility':{'eligible_full_session':chosen[0]['eligible_full_session'],'strict_eligible':False,
-                'calendar_status':chosen[0]['calendar_status'],'roll':chosen[0]['roll'],'warmup_14_ready':chosen[0]['warmup_14_ready']},
-            'continuous':{'version':VERSION,'build_id':self.manifest['build_id'],'retrospective':adjusted,
-                'source_contract':chosen[0]['source_contract'],'history_sessions':len(chosen),
-                'session_dates':[s['trading_date'] for s in reversed(chosen)],'rolls':transitions,
-                'gaps':gaps,'gap_count':gap_count,'gaps_truncated':gap_count>len(gaps),'ineligible_sessions':[{k:s[k] for k in ('trading_date','quality_flags','absent_candidate_minutes')} for s in chosen if not s['eligible_full_session']],
-                'unadjustable_observations':unresolved,'performance_eligible':False,
-                'notice':'Retrospective additive blocks; unresolved rolls separate price anchors. Replay and strategy execution disabled.' if adjusted else 'Unadjusted observed prices; research exclusions retained. Roll jumps are not performance returns.'}}
-
+        return gaps, gap_count, transitions
 
     def cursor_at(self,symbol,session,clock):
         meta=self.snapshot(symbol,session,cursor=0)
