@@ -212,3 +212,7 @@ def continuous_gaps(start:date,end:date,as_of:datetime|None=None,
     return continuous.query('NQ1! Raw','''SELECT * FROM gaps WHERE trading_date>=? AND trading_date<=?
         AND CAST(end_exclusive_utc AS TIMESTAMPTZ)<=? ORDER BY start_utc LIMIT ? OFFSET ?''',
         [start.isoformat(),end.isoformat(),cutoff,limit,offset])
+
+
+from .amt.api import router as amt_router
+app.include_router(amt_router)
