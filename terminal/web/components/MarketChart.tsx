@@ -21,6 +21,7 @@ import {indicatorPoints} from "@/lib/continuous";
 import { useChartHistory } from "@/lib/useChartHistory";
 import type { SeriesIdentity } from "@/lib/chartWindow";
 import ContinuousQuality from "./ContinuousQuality";
+import AuctionTools from "./AuctionTools";
 import { Indicators, readLocal, writeLocal } from "@/lib/workspace";
 
 function atOrBefore(bars: Bar[], time: number) {
@@ -95,6 +96,7 @@ export default function MarketChart({
   const dataRef = useRef(data);
   dataRef.current = data;
   const drawingTools=useRef<HTMLDivElement>(null);
+  const auctionTools = useRef<HTMLDivElement>(null);
   const identity = useRef("");
   const savedViewport = useRef<Viewport | null>(null);
   const restoreViewport = useRef<typeof savedViewport.current>(null);
@@ -492,7 +494,10 @@ export default function MarketChart({
           {!history.edges.newer && <button onClick={() => void history.load("newer")}>Newer sessions</button>}
         </div>}
       </div>}
-      <div className="chart-drawing-tools" ref={drawingTools} />
+      <div className="chart-object-controls">
+        <div className="chart-drawing-tools" ref={drawingTools} />
+        <div className="auction-toolbar" ref={auctionTools} />
+      </div>
       </div>
       <div className="chart-plot">
       <div
@@ -502,6 +507,8 @@ export default function MarketChart({
         data-testid="market-chart"
       />
       {apis && (<>
+        <AuctionTools chart={apis.chart} series={apis.series} selected={baseData} data={data}
+          identity={chartSeries} replay={replay} target={auctionTools.current} />
         <ResearchOverlay chart={apis.chart} series={apis.series} data={data} replay={replay} datasetHash={datasetHash} />
         {rollsVisible && <ContinuousOverlay chart={apis.chart} series={apis.series} data={data} host={host.current} />}
         <Drawings

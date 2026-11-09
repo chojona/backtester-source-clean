@@ -1844,3 +1844,30 @@ tbody tr:hover {
 .clean-chart {height:auto;min-height:var(--chart-height,480px);}
 .quality-dialog {margin:auto;}
 @media(max-width:600px){.clean-chart{min-height:max(510px,var(--chart-height,480px));}}
+
+.chart-object-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.auction-toolbar { display: inline-flex; }
+.auction-toolbar button, .auction-tools button {
+  color: #b9cce5; background: #132236; border: 1px solid #324862; border-radius: 4px;
+  padding: 4px 8px; cursor: pointer;
+}
+.auction-tools {
+  position: absolute; z-index: 12; top: 8px; left: 8px; width: min(380px, calc(100% - 28px));
+  max-height: calc(100% - 18px); overflow: auto; overscroll-behavior: contain;
+  padding: 12px; border: 1px solid #334963; border-radius: 8px; background: #101c2bf5;
+  color: #d8e4f4; box-shadow: 0 8px 28px #0008; font-size: 11px;
+}
+.auction-tools header { display: flex; justify-content: space-between; align-items: center; font-size: 13px; }
+.auction-tools p { margin: 7px 0; }
+.auction-caption, .auction-provenance { color: #a6b9ce; }
+.auction-grid, .auction-anchor form { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px 8px; }
+.auction-grid label, .auction-anchor label { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+.auction-tools select, .auction-tools input:not([type="checkbox"]) {
+  background: #101927; color: #d8e4f4; border: 1px solid #324862; border-radius: 3px; max-width: 100%;
+}
+.auction-tools input[type="range"] { width: 76px; }
+.auction-tools input[type="color"] { width: 24px; height: 19px; }
+.auction-anchor, .auction-provenance { margin-top: 8px; padding-top: 6px; border-top: 1px solid #2b3c50; }
+.auction-provenance summary { cursor: pointer; }
+.auction-provenance dd { overflow-wrap: anywhere; }
+.auction-tools [role="alert"] { color: #f3b2a8; }
