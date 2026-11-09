@@ -39,7 +39,7 @@ test('research results fit a mobile viewport', async ({ page }, testInfo) => {
   await page.goto('/research/');
   await expect(page.locator('#status')).toContainText('Ready');
   await page.getByRole('button',{name:'Run experiment',exact:true}).click();
-  await expect(page.locator('#status')).toContainText('Completed');
+  await expect(page.locator('#status')).toContainText('Completed',{timeout:30_000});
   await expect(page.locator('#chartInfo')).toContainText('NQZ26');
   await expect(page.locator('#results')).toContainText('Mean hypothetical net / event');
   expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);

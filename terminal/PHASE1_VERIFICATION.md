@@ -107,12 +107,16 @@ Storage errors preserve usability and in-memory settings for the visit.
 ## 5. Verification and release
 
 Changed `.github/workflows/terminal.yml`,
-`terminal/tests/benchmark_chart_window.py`, `terminal/README.md`,
+`terminal/tests/benchmark_chart_window.py`, `terminal/web/tests/research.spec.ts`, `terminal/README.md`,
 `terminal/CONTINUOUS.md`, this report, and `docs/{ARCHITECTURE,DEVELOPMENT}.md`.
 Public CI runs the terminal backend and production browser suite using
 formula-generated temporary Parquet, with external data roots absent.
 The separately configured local lane verifies the sealed artifacts and
 runs release-only assertions.
+
+The initial hosted push run reached the mobile research test's five-second
+assertion timeout while the constructed experiment was still running. The
+test now waits up to 30 seconds for the same completion state.
 
 | Feature | Verification |
 | --- | --- |
