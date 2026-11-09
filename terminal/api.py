@@ -3,47 +3,20 @@ from __future__ import annotations
 
 import os
 from datetime import date, datetime
-from functools import lru_cache
 from typing import Annotated, Literal
 
 from duckdb import IOException
 from fastapi import Depends, FastAPI, HTTPException, Query
 
+from .amt.api import router as amt_router
 from .chart_window import chart_window, series_identity
-from .data import DataError, ResearchStore
+from .data import DataError
+from .stores import CONTRACT_PATTERN, chart_store, continuous_store, store
 
 app = FastAPI(title='NQ Quant Research Terminal', version='0.3.0')
+app.include_router(amt_router)
 Frame = Literal['1m', '5m', '15m', '30m', '1h', 'daily']
-Contract = Annotated[str, Query(pattern=r'^NQ(?:[HMUZ][0-9]{1,2}|1! (?:Raw|Adjusted))$')]
-
-
-@lru_cache(maxsize=1)
-def store():
-    root = os.environ.get('NQ_DATA_ROOT')
-    if not root:
-        raise HTTPException(503, 'Set NQ_DATA_ROOT to the sealed v2.0.0 build directory; no sample data is substituted.')
-    try:
-        return ResearchStore(root)
-    except (OSError, ValueError, KeyError) as exc:
-        raise HTTPException(503, f'Dataset unavailable or invalid: {exc}') from exc
-
-
-def chart_store(db, contract):
-    if contract not in ('NQ1! Raw', 'NQ1! Adjusted'):
-        return db
-    root = os.getenv('NQ_CONTINUOUS_ROOT')
-    if not root:
-        raise HTTPException(503, 'Build continuous artifacts and configure NQ_CONTINUOUS_ROOT')
-    try:
-        return continuous_store(root, db)
-    except (OSError, ValueError, KeyError) as exc:
-        raise HTTPException(503, f'Continuous dataset unavailable: {exc}') from exc
-
-
-@lru_cache(maxsize=1)
-def continuous_store(root, db):
-    from .continuous_data import ContinuousStore
-    return ContinuousStore(root, db)
+Contract = Annotated[str, Query(pattern=CONTRACT_PATTERN)]
 
 
 @app.get('/api/health')
