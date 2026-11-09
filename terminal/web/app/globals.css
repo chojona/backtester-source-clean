@@ -1778,3 +1778,64 @@ tbody tr:hover {
   padding: 6px;
   box-shadow: 0 8px 24px #0006;
 }
+
+.continuous-readout {padding:5px 14px;color:#deb568;font:11px ui-monospace,monospace;overflow-wrap:anywhere;}
+.continuous-quality {padding:8px 14px;border-bottom:1px solid #263447;color:#aab9ce;font-size:11px;max-height:200px;overflow:auto;}
+.continuous-quality summary {cursor:pointer;color:#deb568;}
+.continuous-quality a {color:#32bca4;}
+
+.continuous-boundaries {position:absolute;left:0;pointer-events:none;z-index:3;overflow:hidden;}
+.continuous-boundaries .roll-marker {pointer-events:all;}
+
+/* Chart information occupies normal layout rows; only price overlays sit on the plot. */
+.clean-chart {display:flex;flex-direction:column;min-height:460px;}
+.chart-header {flex:none;display:flex;flex-direction:column;gap:9px;padding:12px 14px 10px;border-bottom:1px solid var(--line);min-width:0;background:#0c1119;}
+.clean-chart .chart-readout {position:static;display:flex;align-items:baseline;justify-content:space-between;gap:10px;flex-wrap:wrap;min-width:0;pointer-events:auto;}
+.clean-chart .ohlc {margin:0;display:flex;flex-wrap:wrap;gap:6px 12px;max-width:none;font-size:10px;line-height:1.7;}
+.clean-chart .chart-symbol {font-size:12px;white-space:nowrap;}
+.clean-chart .continuous-readout {position:static;padding:0;font:10px/1.6 ui-monospace,monospace;color:#8c9db4;overflow-wrap:anywhere;}
+.clean-chart .chart-legend {position:static;display:flex;flex-wrap:wrap;gap:6px 14px;font-size:10px;line-height:1.6;pointer-events:auto;}
+.clean-chart .chart-legend b {display:inline;}
+.chart-view-controls {display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;font-size:10px;color:#8092aa;line-height:1.5;}
+.chart-view-controls>div {display:flex;align-items:center;gap:12px;flex-wrap:wrap;}
+.chart-view-controls button,.quality-trigger {padding:5px 9px;border:1px solid #304158;border-radius:4px;font-size:10px;line-height:1.4;}
+.roll-toggle {display:flex;align-items:center;gap:5px;cursor:pointer;white-space:nowrap;}
+.roll-toggle input {accent-color:#6a9fe0;}
+.chart-plot {position:relative;flex:1;min-height:260px;min-width:0;}
+.clean-chart .chart-canvas {position:absolute;inset:0;height:100%;width:100%;}
+.chart-drawing-tools .drawing-toolbar {position:relative;top:auto;left:auto;flex-wrap:wrap;min-width:0;}
+.chart-drawing-tools:empty {display:none;}
+.quality-access {padding:7px 12px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;border-bottom:1px solid var(--line);}
+.quality-status {color:#8a99ae;font-size:10px;line-height:1.5;}
+.quality-dialog {padding:0;border:1px solid #304158;border-radius:12px;background:#101925;color:#cbd7e6;width:min(760px,calc(100vw - 24px));max-height:calc(100dvh - 32px);overflow:auto;box-shadow:0 28px 100px #0009;}
+.quality-dialog::backdrop {background:#03070dbd;backdrop-filter:blur(4px);}
+.quality-dialog-content {padding:24px;min-width:0;}
+.quality-heading {display:flex;align-items:flex-start;justify-content:space-between;gap:16px;}
+.quality-heading span {font-size:9px;letter-spacing:1.5px;color:#8295af;}
+.quality-heading h2 {margin:7px 0 0;font-size:21px;font-weight:600;}
+.quality-heading button {border:1px solid #33435a;border-radius:5px;min-width:32px;height:32px;}
+.quality-intro,.quality-policy {font-size:12px;line-height:1.7;color:#a1b1c6;margin:16px 0;}
+.quality-policy {font-size:11px;color:#8092aa;}
+.quality-stats {display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;padding:16px 0;border-block:1px solid #263447;}
+.quality-stats>div {display:flex;flex-direction:column;gap:6px;min-width:0;}
+.quality-stats strong {font-size:23px;font-weight:550;font-variant-numeric:tabular-nums;}
+.quality-stats span {font-size:10px;color:#8d9fb6;}
+.quality-tabs {display:flex;gap:4px;border-bottom:1px solid #2a394e;margin-top:20px;overflow:auto;}
+.quality-tabs button {white-space:nowrap;font-size:11px;padding:10px 12px;color:#8e9fb6;border-bottom:2px solid transparent;}
+.quality-tabs button[aria-selected=true] {color:#cfdef0;border-color:#78a6e7;}
+.quality-table-scroll {overflow:auto;max-height:380px;min-height:180px;}
+.quality-table-scroll table {width:100%;border-collapse:collapse;font-size:11px;}
+.quality-table-scroll th {text-align:left;font-size:9px;font-weight:500;letter-spacing:.5px;color:#8599b5;padding:13px 10px;white-space:nowrap;position:sticky;top:0;background:#101925;}
+.quality-table-scroll td {padding:11px 10px;border-bottom:1px solid #202d3e;line-height:1.6;vertical-align:top;}
+.quality-table-scroll td:first-child {white-space:nowrap;}
+.quality-badge {display:inline-block;border-radius:4px;padding:2px 6px;background:#1b302e;color:#89baae;font-size:10px;white-space:nowrap;}
+.quality-badge.warning {background:#352c23;color:#d3b78d;}
+.quality-footer {display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-top:14px;color:#91a2ba;font-size:10px;}
+.quality-footer>div {display:flex;gap:7px;}
+.quality-footer button {padding:6px 10px;border:1px solid #304158;border-radius:4px;}
+.quality-download {display:inline-block;margin-top:20px;font-size:11px;color:#9cbbdf;}
+@media(max-width:600px){.chart-header{padding:10px;gap:8px;}.clean-chart{min-height:510px;}.quality-dialog-content{padding:16px;}.quality-stats{grid-template-columns:repeat(2,minmax(0,1fr));}.quality-heading h2{font-size:18px;}}
+/* Let wrapped headers grow instead of pushing the plot into the replay bar. */
+.clean-chart {height:auto;min-height:var(--chart-height,480px);}
+.quality-dialog {margin:auto;}
+@media(max-width:600px){.clean-chart{min-height:max(510px,var(--chart-height,480px));}}

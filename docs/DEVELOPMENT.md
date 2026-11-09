@@ -56,25 +56,40 @@ For browser verification, run the frontend and API with the actual release, then
 ```sh
 cd terminal/web
 npx playwright install chromium
-npm run test:smoke
+npm run test:smoke -- terminal.spec.ts v02.spec.ts continuous.spec.ts
+NQ_BROWSER_RELEASE=1 npm run test:smoke -- intraday.spec.ts -g 'release-backed'
 ```
 
 If a compatible Chromium already exists:
 
 ```sh
 PLAYWRIGHT_CHROMIUM_EXECUTABLE=/absolute/path/to/chrome-headless-shell \
-  npm run test:smoke
+  npm run test:smoke -- terminal.spec.ts v02.spec.ts continuous.spec.ts
 ```
 
 `TERMINAL_URL` can override the default browser-test base URL, `http://127.0.0.1:3000`. The browser suite includes real-data interaction tests and a pure drawing projection check. It covers selection, replay, Explorer synchronization, drawing operations, local persistence, layout changes, fullscreen, responsive behavior, API error recovery, and unavailable local storage.
 
 Screenshots and failed-test traces are written under ignored `terminal/web/test-results/`. They can contain market data and remain local review artifacts.
 
-## What CI currently runs
+## What CI runs
 
-[The GitHub Actions workflow](../.github/workflows/source-boundary.yml) checks out full Git history, uses Python 3.12, runs the source-boundary checker, installs `.[test]`, and runs the default offline pytest suite.
+The [source-boundary workflow](../.github/workflows/source-boundary.yml) checks full Git history and runs the core offline suite on Python 3.12. The [terminal workflow](../.github/workflows/terminal.yml) runs the synthetic backend suite, TypeScript, a Next.js production build and Chromium against an ephemeral formula-only release. The job neither mounts a licensed release nor uploads browser artifacts. Licensed backend checks skip in CI and remain a separate local verification step.
 
-It does not install terminal requirements, build Next.js, supply licensed historical data, or run Playwright. Run the applicable terminal checks locally for terminal changes; a green offline CI job alone does not verify the terminal.
+To reproduce the synthetic browser job, install the terminal requirements and frontend dependencies, build the frontend and install Chromium. Run the following in separate shells from the repository root:
+
+```sh
+.venv-terminal/bin/python -m terminal.tests.serve_synthetic
+npm --prefix terminal/web run start
+```
+
+Then run the browser checks from `terminal/web`:
+
+```sh
+NQ_BROWSER_FIXTURE=1 npm run test:smoke -- intraday.spec.ts research.spec.ts -g 'constructed intraday fixture|research'
+npm run test:smoke -- v02.spec.ts continuous.spec.ts -g 'price/time projection|indicator lines'
+```
+
+The fixture writes temporary test inputs and synthetic experiment results outside the checkout. Stop both processes with Ctrl-C. See the [terminal guide](../terminal/README.md#verification) for the separate licensed browser run.
 
 ## Preparing a change
 

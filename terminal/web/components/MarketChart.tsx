@@ -7,20 +7,28 @@ import {
   createChart,
   ColorType,
   LineStyle,
+  TickMarkType,
   type IChartApi,
   type ISeriesApi,
+  type LogicalRange,
   type UTCTimestamp,
 } from "lightweight-charts";
 import { Bar, Snapshot, fmt, clock } from "@/lib/types";
 import Drawings from "./Drawings";
+import ResearchOverlay from "./ResearchOverlay";
+import ContinuousOverlay from "./ContinuousOverlay";
+import {indicatorPoints} from "@/lib/continuous";
+import { useIntradayHistory } from "@/lib/useIntradayHistory";
 import { Indicators, readLocal, writeLocal } from "@/lib/workspace";
 export default function MarketChart({
-  data,
+  data: baseData,
   vwap,
   levels,
   opening,
   settings,
   replay,
+  datasetHash,
+  allowHistory,
 }: {
   data: Snapshot | null;
   vwap: boolean;
@@ -28,7 +36,13 @@ export default function MarketChart({
   opening: boolean;
   settings: Indicators;
   replay: boolean;
+  datasetHash?: string;
+  allowHistory: boolean;
 }) {
+  const history = useIntradayHistory(baseData, allowHistory && !replay);
+  const { data } = history;
+  const historyRef = useRef(history);
+  historyRef.current = history;
   const host = useRef<HTMLDivElement>(null),
     chart = useRef<IChartApi | null>(null);
   const series = useRef<{
@@ -47,6 +61,7 @@ export default function MarketChart({
   const updating = useRef(false);
   const dataRef = useRef(data);
   dataRef.current = data;
+  const drawingTools=useRef<HTMLDivElement>(null);
   const identity = useRef("");
   const lastReplay = useRef<{
     id: string;
@@ -54,6 +69,7 @@ export default function MarketChart({
     count: number;
   } | null>(null);
   const [hover, setHover] = useState<Bar | null>(null);
+  const [rollsVisible,setRollsVisible]=useState(false);
   useEffect(() => {
     if (!host.current) return;
     const c = createChart(host.current, {
@@ -79,7 +95,14 @@ export default function MarketChart({
         secondsVisible: false,
         rightOffset: 8,
         lockVisibleTimeRangeOnResize: true,
-        tickMarkFormatter: (time: number) => clock(time),
+        tickMarkFormatter: (time: number, kind: TickMarkType) => {
+          if(!dataRef.current?.continuous || dataRef.current.continuous.history_sessions===1)return clock(time);
+          const date=new Date(time*1000);
+          if(kind===TickMarkType.Year)return date.toLocaleDateString("en-US",{timeZone:"America/New_York",year:"numeric"});
+          if(kind===TickMarkType.Month)return date.toLocaleDateString("en-US",{timeZone:"America/New_York",month:"short",year:"2-digit"});
+          if(kind===TickMarkType.DayOfMonth)return date.toLocaleDateString("en-US",{timeZone:"America/New_York",month:"short",day:"numeric"});
+          return clock(time);
+        },
       },
       localization: {
         timeFormatter: (time: number) =>
@@ -133,7 +156,49 @@ export default function MarketChart({
       const b = dataRef.current?.bars.find((b) => b.time === p.time);
       setHover(b ?? null);
     });
+    const plot = host.current;
+    const scale = c.timeScale();
+    let gesture: { pointer: number; range: LogicalRange; scope: string } | null = null;
+    let frame = 0;
+    const checkPan = (before: LogicalRange, scope: string) => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(() => {
+        const loader = historyRef.current;
+        const after = scale.getVisibleLogicalRange();
+        if (!loader.enabled || !after || identity.current !== scope || updating.current) return;
+        const bars = candles.barsInLogicalRange(after);
+        if (!bars) return;
+        if (after.from < before.from - 0.5 && after.to < before.to - 0.5 && bars.barsBefore < 64)
+          void loader.load("older");
+        else if (after.from > before.from + 0.5 && after.to > before.to + 0.5 && bars.barsAfter < 64)
+          void loader.load("newer");
+      });
+    };
+    const startPan = (event: PointerEvent) => {
+      const range = scale.getVisibleLogicalRange();
+      if (event.isPrimary && event.button === 0 && range && historyRef.current.enabled)
+        gesture = { pointer: event.pointerId, range, scope: identity.current };
+    };
+    const endPan = (event: PointerEvent) => {
+      if (gesture?.pointer !== event.pointerId) return;
+      if (event.type === "pointerup") checkPan(gesture.range, gesture.scope);
+      gesture = null;
+    };
+    const scrollPan = (event: WheelEvent) => {
+      const range = scale.getVisibleLogicalRange();
+      if (range && historyRef.current.enabled && Math.abs(event.deltaX) > Math.abs(event.deltaY))
+        checkPan(range, identity.current);
+    };
+    plot.addEventListener("pointerdown", startPan);
+    window.addEventListener("pointerup", endPan);
+    window.addEventListener("pointercancel", endPan);
+    plot.addEventListener("wheel", scrollPan, { capture: true, passive: true });
     return () => {
+      cancelAnimationFrame(frame);
+      plot.removeEventListener("pointerdown", startPan);
+      window.removeEventListener("pointerup", endPan);
+      window.removeEventListener("pointercancel", endPan);
+      plot.removeEventListener("wheel", scrollPan, true);
       c.remove();
       chart.current = null;
       series.current = null;
@@ -144,8 +209,9 @@ export default function MarketChart({
       c = chart.current;
     if (!s || !c) return;
     const bars = data?.bars ?? [];
+    c.timeScale().applyOptions({minBarSpacing:data?.continuous ? 0.02 : 0.5});
     const id = data
-      ? `${data.contract}/${data.session}/${data.timeframe}/${data.display || "Globex"}${replay ? "/replay" : ""}`
+      ? `${data.contract}/${data.session}/${data.timeframe}/${data.display || "Globex"}${replay ? "/replay" : ""}${baseData?.continuous ? `/history/${baseData.continuous.history_sessions}` : ""}`
       : "";
     const nextRange =
       identity.current !== id
@@ -155,11 +221,18 @@ export default function MarketChart({
           )
         : null;
     const beforeRange = c.timeScale().getVisibleLogicalRange();
+    const visible = c.timeScale().getVisibleRange();
+    const anchors = data?.continuous && !replay && identity.current === id && visible
+      ? [visible.from, visible.to].map(time => ({
+          time, index: c.timeScale().timeToIndex(time),
+        }))
+      : [];
     const prior = lastReplay.current;
     updating.current = true;
-    s.candles.setData(
-      bars.map((b) => ({ ...b, time: b.time as UTCTimestamp })),
-    );
+    const candles=bars.map(b=>({...b,time:b.time as UTCTimestamp,color:b.eligible_full_session===false?'#637084':undefined,wickColor:b.eligible_full_session===false?'#637084':undefined}));
+    const times=new Set(bars.map(b=>b.time));
+    const missing=data?.timeframe==='1m' ? [...new Set((data?.continuous?.gaps||[]).map(g=>Math.floor(Date.parse(g.start_utc)/1000)))].filter(t=>!times.has(t)) : [];
+    s.candles.setData([...candles,...missing.map(time=>({time:time as UTCTimestamp}))].sort((a,b)=>Number(a.time)-Number(b.time)));
     s.volume.setData(
       bars.map((b) => ({
         time: b.time as UTCTimestamp,
@@ -175,9 +248,7 @@ export default function MarketChart({
       ["lower", "vwap_lower"],
     ] as const) {
       s[key].setData(
-        bars
-          .filter((b) => b[field] !== null)
-          .map((b) => ({ time: b.time as UTCTimestamp, value: b[field]! })),
+        indicatorPoints(bars,field,!!data?.continuous).map(point=>({...point,time:point.time as UTCTimestamp})),
       );
       const opt =
         settings[
@@ -211,6 +282,16 @@ export default function MarketChart({
       } else c.timeScale().fitContent();
       identity.current = id;
       setHover(null);
+    } else if (beforeRange) {
+      for (const anchor of anchors) {
+        const index = c.timeScale().timeToIndex(anchor.time);
+        if (index === null || anchor.index === null) continue;
+        const shift = index - anchor.index;
+        c.timeScale().setVisibleLogicalRange({
+          from: beforeRange.from + shift, to: beforeRange.to + shift,
+        });
+        break;
+      }
     }
     if (replay && data && bars.length) {
       const span = {
@@ -244,7 +325,7 @@ export default function MarketChart({
     updating.current = false;
     const savedRange = c.timeScale().getVisibleRange();
     if (id && savedRange) writeLocal("nq:v2:view:" + id, savedRange);
-  }, [data, vwap, opening, settings, replay]);
+  }, [data, baseData, vwap, opening, settings, replay]);
   useEffect(() => {
     const s = series.current;
     if (!s) return;
@@ -272,7 +353,8 @@ export default function MarketChart({
     (hover ? data?.bars.find((b) => b.time === hover.time) : null) ??
     data?.bars.at(-1);
   return (
-    <div className="chart-wrap">
+    <div className="chart-wrap clean-chart">
+      <div className="chart-header">
       <div className="chart-readout">
         <span className="chart-symbol">
           {data?.contract || "NQ"}{" "}
@@ -290,23 +372,10 @@ export default function MarketChart({
           </span>
         </div>
       </div>
-      <div
-        ref={host}
-        className="chart-canvas"
-        aria-label="Historical NQ candlestick chart"
-        data-testid="market-chart"
-      />
-      {apis && (
-        <Drawings
-          chart={apis.chart}
-          series={apis.series}
-          data={data}
-          settings={settings}
-        />
-      )}
-      <div className="chart-watermark">
-        NQ<span>NASDAQ 100 FUTURES</span>
-      </div>
+      {data?.continuous && <div className="continuous-readout" data-testid="continuous-readout" title={`Raw OHLC ${active?.raw_open}, ${active?.raw_high}, ${active?.raw_low}, ${active?.raw_close}; offset ${active?.adjustment_offset}; Roll ${active?.roll_id || 'initial'}; adjustment ${active?.adjustment_status || 'unadjusted'}`}>
+        Source {active?.source_contract || data.continuous.source_contract} · raw close {fmt(active?.raw_close)} · offset {fmt(active?.adjustment_offset)} · {active?.retrospective ? `retrospective block ${active?.adjustment_block_id}` : 'unadjusted'} · {active?.eligible_full_session ? 'research eligible (not certified)' : 'research ineligible'}
+
+      </div>}
       <div className="chart-legend">
         {vwap && (
           <span>
@@ -326,6 +395,43 @@ export default function MarketChart({
             Previous session H/L
           </span>
         )}
+      </div>
+      <div className="chart-view-controls">
+        {data?.continuous && <span className="coverage-label" data-testid="continuous-coverage">{data.bars.length ? `${data.bars[0].trading_date} → ${data.bars.at(-1)?.trading_date}` : 'No observations'} · {data.continuous.history_sessions.toLocaleString()} sessions</span>}
+        <div><button onClick={()=>{const c=chart.current;if(c){c.priceScale('right').applyOptions({autoScale:true});c.timeScale().fitContent();}}}>Fit history</button>
+        {data?.continuous && <label className="roll-toggle"><input aria-label="Show rollovers" type="checkbox" checked={rollsVisible} onChange={e=>setRollsVisible(e.target.checked)}/> Rollovers</label>}</div>
+      </div>
+      {history.enabled && <div className="chart-view-controls" role="status" data-testid="intraday-history">
+        {history.pending ? `Loading ${history.pending} sessions…` :
+          history.failed ? <span>Could not load {history.failed} sessions. <button onClick={() => void history.load(history.failed!)}>Retry history</button></span> :
+          history.edges?.older && history.edges?.newer ? "All available history edges reached." :
+          history.edges?.older ? "Earliest session reached. Pan right for later sessions." :
+          history.edges?.newer ? "Latest session reached. Pan left for earlier sessions." :
+          "Pan at either edge to load more historical sessions."}
+      </div>}
+      <div className="chart-drawing-tools" ref={drawingTools} />
+      </div>
+      <div className="chart-plot">
+      <div
+        ref={host}
+        className="chart-canvas"
+        aria-label="Historical NQ candlestick chart"
+        data-testid="market-chart"
+      />
+      {apis && (<>
+        <ResearchOverlay chart={apis.chart} series={apis.series} data={data} replay={replay} datasetHash={datasetHash} />
+        {rollsVisible && <ContinuousOverlay chart={apis.chart} series={apis.series} data={data} host={host.current} />}
+        <Drawings
+          chart={apis.chart}
+          series={apis.series}
+          data={data}
+          settings={settings}
+          toolbarTarget={drawingTools.current}
+        />
+      </>)}
+      <div className="chart-watermark">
+        NQ<span>NASDAQ 100 FUTURES</span>
+      </div>
       </div>
     </div>
   );

@@ -21,6 +21,7 @@ import {
   X,
 } from "lucide-react";
 import MarketChart from "./MarketChart";
+import ContinuousQuality from "./ContinuousQuality";
 import IndicatorManager from "./IndicatorManager";
 import {
   normalizeWorkspace,
@@ -45,6 +46,9 @@ import {
 } from "@/lib/types";
 const frames: Frame[] = ["1m", "5m", "15m", "30m", "1h", "daily"];
 export default function Terminal() {
+  const [historySessions,setHistorySessions]=useState(1);
+  const wideHistory=useRef<number|null>(null);
+  const [rangeNotice,setRangeNotice]=useState("");
   const [contracts, setContracts] = useState<Contract[]>([]),
     [sessions, setSessions] = useState<Session[]>([]);
   const [contract, setContract] = useState(""),
@@ -145,7 +149,7 @@ export default function Terminal() {
     setLoading(true);
     setError("");
     setSessions([]);
-    api<Session[]>(`sessions?contract=${contract}`, ac.signal)
+    api<Session[]>(`sessions?contract=${encodeURIComponent(contract)}&limit=${contract.startsWith("NQ1!") ? 5000 : 2000}`, ac.signal)
       .then((s) => {
         setSessions(s);
         setSession((old) =>
@@ -166,8 +170,22 @@ export default function Terminal() {
       });
     return () => ac.abort();
   }, [contract, retry, ready]);
+  const needsIntradayWindow=contract.startsWith("NQ1!") && frame!=="daily" && cursor===null && historySessions>120;
+  useEffect(()=>{
+    if(!needsIntradayWindow)return;
+    wideHistory.current=historySessions;
+    setHistorySessions(20);
+    setRangeNotice("Intraday · 20 sessions. Use the date selector for earlier history; D restores full history.");
+  },[needsIntradayWindow,historySessions]);
+  const changeFrame=(next:Frame)=>{
+    if(next==='daily' && contract.startsWith('NQ1!') && wideHistory.current!==null){
+      setHistorySessions(wideHistory.current);wideHistory.current=null;setRangeNotice('');
+    }
+    setFrame(next);setOffset(0);
+  };
   useEffect(() => {
     if (
+      needsIntradayWindow ||
       !ready ||
       !contract ||
       !session ||
@@ -188,6 +206,7 @@ export default function Terminal() {
       opening_minutes: String(settings.openingMinutes),
       deviations: String(settings.deviations),
     });
+    if (contract.startsWith("NQ1!")) q.set("history_sessions",String(cursor === null ? historySessions : 1));
     if (cursor !== null) q.set("cursor", String(cursor));
     api<Snapshot>(`snapshot?${q}`, ac.signal)
       .then((d) => {
@@ -224,6 +243,8 @@ export default function Terminal() {
     retry,
     ready,
     sessions,
+    historySessions,
+    needsIntradayWindow,
     display,
     settings.openingMinutes,
     settings.deviations,
@@ -387,7 +408,7 @@ export default function Terminal() {
           <ShieldCheck size={20} />
         </button>
         <div className="rail-bottom">
-          <span>v0.2</span>
+          <span>v0.3</span>
           <button
             onClick={() => setDetails(true)}
             aria-label="Data configuration"
@@ -406,7 +427,7 @@ export default function Terminal() {
           <div className="top-status">
             <span className="status-dot" />
             LOCAL DATA <i /> <span>HISTORICAL</span>
-            <span className="version">v0.2.0</span>
+            <span className="version">v0.3.0</span>
           </div>
         </header>
         <div className="breadcrumb">
@@ -463,7 +484,7 @@ export default function Terminal() {
                     >
                       {!contracts.length && <option>Loading…</option>}
                       {contracts.map((c) => (
-                        <option key={c.contract}>{c.contract}</option>
+                        <option key={c.contract} value={c.contract}>{c.label || c.contract}</option>
                       ))}
                     </select>
                   </label>
@@ -524,8 +545,7 @@ export default function Terminal() {
                       className={frame === f ? "active" : ""}
                       key={f}
                       onClick={() => {
-                        setFrame(f);
-                        setOffset(0);
+                        changeFrame(f);
                       }}
                     >
                       {f === "daily" ? "D" : f}
@@ -566,6 +586,12 @@ export default function Terminal() {
                   <Focus size={15} />
                 </button>
               </div>
+              {contract.startsWith("NQ1!") && <div className="workspace-actions">
+                <label>Continuous history <select aria-label="Continuous history" value={historySessions} disabled={cursor !== null} onChange={e=>{const n=Number(e.target.value);wideHistory.current=null;setRangeNotice("");setHistorySessions(n);if(n===5000)setFrame("daily");reset();}}>
+                  <option value={1}>Selected session</option><option value={20}>20 sessions</option><option value={120}>120 sessions</option><option value={5000}>Full history · daily</option>
+                </select></label>
+                <span role="status">{rangeNotice || (contract === "NQ1! Adjusted" ? "Retrospective adjustment blocks · no replay or strategy execution" : "Observed raw prices · roll jumps excluded from returns")}</span>
+              </div>}
               <div className="workspace-actions">
                 <button aria-label="Chart fullscreen" onClick={fullscreen}>
                   ⛶ Fullscreen
@@ -595,6 +621,7 @@ export default function Terminal() {
                 </details>
                 <span>{storageWarning}</span>
               </div>
+              {data?.continuous && <ContinuousQuality data={data} />}
               <div className="chart-stage">
                 <MarketChart
                   data={data}
@@ -603,6 +630,10 @@ export default function Terminal() {
                   opening={opening}
                   settings={settings}
                   replay={cursor !== null}
+                  datasetHash={provenance?.hashes["research.parquet"]}
+                  allowHistory={!needsIntradayWindow && data?.contract === contract &&
+                    data.session === session && data.timeframe === frame && data.display === display &&
+                    data.opening_minutes === settings.openingMinutes && data.deviations === settings.deviations}
                 />
                 {loading && (
                   <div
@@ -645,7 +676,8 @@ export default function Terminal() {
                   {cursor === null ? (
                     <button
                       className="replay-start"
-                      disabled={!data || loading}
+                      disabled={!data || loading || contract === "NQ1! Adjusted"}
+                      title={contract === "NQ1! Adjusted" ? "Retrospective adjusted prices cannot be replayed" : "Replay observed raw bars"}
                       onClick={enterReplay}
                     >
                       <Play size={13} />
@@ -778,7 +810,7 @@ export default function Terminal() {
                 setLayout((l) => ({ ...l, bottom }));
               }}
             >
-              <Explorer data={data} offset={offset} setOffset={setOffset} />
+              <Explorer data={data} offset={offset} setOffset={setOffset} replay={cursor !== null} />
             </div>
             <div
               role="separator"
@@ -904,7 +936,7 @@ export default function Terminal() {
               <li>
                 VWAP uses HLC3 and bar volume. Opening range is 09:30–10:00 ET.
               </li>
-              <li>No volume profile is estimated in v0.2.</li>
+              <li>No volume profile is estimated in v0.3.</li>
             </ul>
             <h4>Fixed roll policy</h4>
             <p>{provenance?.summary.policy.selection}</p>

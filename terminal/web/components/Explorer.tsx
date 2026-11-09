@@ -21,8 +21,10 @@ export default function Explorer({
   data,
   offset,
   setOffset,
+  replay = false,
 }: {
   data: Snapshot | null;
+  replay?: boolean;
   offset: number;
   setOffset: (v: number) => void;
 }) {
@@ -53,17 +55,20 @@ export default function Explorer({
           >
             <t.icon size={14} />
             {t.name}
-            {t.name !== "Data Explorer" && <LockKeyhole size={10} />}
+            {t.name === "Backtest Results" && <LockKeyhole size={10} />}
           </button>
         ))}
         <span className="workspace-label">WORKSPACE / 01</span>
       </div>
-      {tab !== "Data Explorer" ? (
+      {["Strategy Research", "Experiment History"].includes(tab) ? (
+        data?.continuous ? <div className="inactive-panel">Continuous symbols are chart views. Select an eligible, certified outright contract for strategy research.</div> : replay ? <div className="inactive-panel">Research results and history are hidden during chart replay.</div> :
+        <iframe title="Strategy Research workspace" src={`/research/?contract=${encodeURIComponent(data?.contract || "")}&session=${encodeURIComponent(data?.session || "")}`} style={{width:"100%",height:850,border:0}} />
+      ) : tab !== "Data Explorer" ? (
         <div className="inactive-panel">
           <LockKeyhole size={24} />
           <h3>{tab}</h3>
           <p>
-            Inactive in v0.2. No {tab.toLowerCase()} functionality is connected.
+            Unavailable: event research does not implement portfolio accounting.
           </p>
           <button onClick={() => setTab("Data Explorer")}>
             Return to Data Explorer
@@ -78,7 +83,7 @@ export default function Explorer({
                 {data?.contract || "—"} <i>/</i> {data?.timeframe || "1m"}{" "}
                 <i>/</i> {data?.session || "Select a session"}
               </span>
-              <span className="tag">ELIGIBLE ONLY</span>
+              <span className="tag">{data?.continuous ? "MIXED ELIGIBILITY" : "ELIGIBLE ONLY"}</span>
             </div>
             <label className="search">
               <Search size={13} />
@@ -130,7 +135,7 @@ export default function Explorer({
                         className={`row-status ${b.partial ? "partial" : ""}`}
                       >
                         <i />
-                        {b.partial ? "DEVELOPING" : "OBSERVED"}
+                        {b.eligible_full_session === false ? "INELIGIBLE" : b.partial ? "DEVELOPING" : "OBSERVED"}
                       </span>
                     </td>
                   </tr>

@@ -10,9 +10,9 @@ from fastapi import Depends, FastAPI, HTTPException, Query
 
 from .data import DataError, ResearchStore
 
-app = FastAPI(title='NQ Quant Research Terminal', version='0.2.0')
+app = FastAPI(title='NQ Quant Research Terminal', version='0.3.0')
 Frame = Literal['1m', '5m', '15m', '30m', '1h', 'daily']
-Contract = Annotated[str, Query(pattern=r'^NQ[HMUZ][0-9]{1,2}$')]
+Contract = Annotated[str, Query(pattern=r'^NQ(?:[HMUZ][0-9]{1,2}|1! (?:Raw|Adjusted))$')]
 
 
 @lru_cache(maxsize=1)
@@ -26,6 +26,24 @@ def store():
         raise HTTPException(503, f'Dataset unavailable or invalid: {exc}') from exc
 
 
+def chart_store(db, contract):
+    if contract not in ('NQ1! Raw', 'NQ1! Adjusted'):
+        return db
+    root = os.getenv('NQ_CONTINUOUS_ROOT')
+    if not root:
+        raise HTTPException(503, 'Build continuous artifacts and configure NQ_CONTINUOUS_ROOT')
+    try:
+        return continuous_store(root, db)
+    except (OSError, ValueError, KeyError) as exc:
+        raise HTTPException(503, f'Continuous dataset unavailable: {exc}') from exc
+
+
+@lru_cache(maxsize=1)
+def continuous_store(root, db):
+    from .continuous_data import ContinuousStore
+    return ContinuousStore(root, db)
+
+
 @app.get('/api/health')
 def health(db=Depends(store)):
     return {'status': 'ready', 'version': db.summary['version']}
@@ -33,28 +51,39 @@ def health(db=Depends(store)):
 
 @app.get('/api/provenance')
 def provenance(db=Depends(store)):
-    return db.provenance()
+    result = db.provenance()
+    if os.getenv('NQ_CONTINUOUS_ROOT'):
+        continuous = chart_store(db, 'NQ1! Raw')
+        result['continuous'] = {'build_id':continuous.manifest['build_id'], 'quality':continuous.quality,
+                                'policy':continuous.manifest['specification']}
+    return result
 
 
 @app.get('/api/contracts')
 def contracts(db=Depends(store)):
-    return db.contracts()
+    return db.contracts() + (chart_store(db,'NQ1! Raw').contracts() if os.getenv('NQ_CONTINUOUS_ROOT') else [])
 
 
 @app.get('/api/sessions')
 def sessions(contract: Contract | None = None, start: date | None = None, end: date | None = None,
-             limit: int = Query(2000, ge=1, le=2000), offset: int = Query(0, ge=0), db=Depends(store)):
+             limit: int = Query(2000, ge=1, le=5000), offset: int = Query(0, ge=0), db=Depends(store)):
     if start and end and start > end:
         raise HTTPException(422, 'start must not follow end')
-    return db.sessions(contract, start, end, limit, offset)
+    return chart_store(db, contract).sessions(contract, start, end, limit, offset)
 
 
 def session_snapshot(contract: Contract, session: date, timeframe: Frame = '1m',
                      cursor: int | None = Query(None, ge=0, le=1500), as_of: datetime | None = None,
                      offset: int = Query(0, ge=0), limit: int = Query(50, ge=1, le=500),
                      display: Literal['Globex', 'RTH'] = 'Globex',
-                     opening_minutes: int = Query(30, ge=1, le=120), deviations: float = Query(1, ge=.25, le=5), db=Depends(store)):
+                     opening_minutes: int = Query(30, ge=1, le=120), deviations: float = Query(1, ge=.25, le=5),
+                     history_sessions: int = Query(1,ge=1,le=5000), db=Depends(store)):
     try:
+        selected = chart_store(db,contract)
+        if selected is not db:
+            return selected.snapshot(contract,session,timeframe,cursor,as_of,offset,limit,display,opening_minutes,deviations,history_sessions)
+        if history_sessions != 1:
+            raise DataError('Multi-session history requires a continuous symbol')
         return db.snapshot(contract, session, timeframe, cursor, as_of, offset, limit, display, opening_minutes, deviations)
     except DataError as exc:
         raise HTTPException(422, str(exc)) from exc
@@ -81,6 +110,9 @@ def bars(contract: Contract, start: date, end: date, timeframe: Frame = '1m',
         raise HTTPException(422, 'Range must be ordered and at most 31 days (inclusive)')
     if as_of and as_of.tzinfo is None:
         raise HTTPException(422, 'as_of must include a timezone')
+    db = chart_store(db,contract)
+    if contract == "NQ1! Adjusted" and as_of is not None:
+        raise HTTPException(422,"Retrospective adjusted prices are unavailable in replay/as_of")
     sessions = db.sessions(contract, start, end, 32, 0)
     # Each session stays separate. Session VWAP resets and daily candles never cross contracts.
     return {'contract': contract, 'sessions': [
@@ -90,6 +122,8 @@ def bars(contract: Contract, start: date, end: date, timeframe: Frame = '1m',
 
 @app.get('/api/rolls')
 def rolls(contract: Contract, db=Depends(store)):
+    if contract.startswith('NQ1!'):
+        return chart_store(db,contract).rolls
     return db.query('''SELECT trading_date, selected_contract, legacy_contract, quality_flags
                        FROM rolls WHERE selected_contract=? ORDER BY trading_date''', [contract])
 
@@ -97,6 +131,53 @@ def rolls(contract: Contract, db=Depends(store)):
 @app.get('/api/replay-time')
 def replay_time(contract: Contract, session: date, time: Annotated[str, Query(pattern=r'^\d{2}:\d{2}$')], db=Depends(store)):
     try:
-        return {'cursor': db.cursor_at(contract, session, time)}
+        return {'cursor': chart_store(db,contract).cursor_at(contract, session, time)}
     except DataError as exc:
         raise HTTPException(422, str(exc)) from exc
+
+
+from .research_api import router as research_router
+app.include_router(research_router)
+
+
+@app.get('/api/continuous/manifest')
+def continuous_manifest(db=Depends(store)):
+    continuous=chart_store(db,'NQ1! Raw')
+    return {'manifest':continuous.manifest,'rolls':continuous.rolls,'quality':continuous.quality}
+
+
+@app.get('/api/continuous/intraday')
+def continuous_intraday(
+    contract: Literal['NQ1! Raw', 'NQ1! Adjusted'],
+    anchor: date,
+    direction: Literal['older', 'newer'],
+    timeframe: Literal['1m', '5m', '15m', '30m', '1h'] = '1m',
+    display: Literal['Globex', 'RTH'] = 'Globex',
+    opening_minutes: int = Query(30, ge=1, le=120),
+    deviations: float = Query(1, ge=.25, le=5),
+    limit: int = Query(10, ge=1, le=20),
+    cursor: int | None = None,
+    as_of: datetime | None = None,
+    db=Depends(store),
+):
+    if cursor is not None or as_of is not None:
+        raise HTTPException(422, 'Intraday history windows are for retrospective browsing only')
+    try:
+        return chart_store(db, contract).intraday_window(
+            contract, anchor, direction, timeframe, display, opening_minutes, deviations, limit,
+        )
+    except DataError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
+@app.get('/api/continuous/gaps')
+def continuous_gaps(start:date,end:date,as_of:datetime|None=None,
+                    limit:int=Query(500,ge=1,le=2000),offset:int=Query(0,ge=0),db=Depends(store)):
+    if start>end or as_of is not None and as_of.tzinfo is None:
+        raise HTTPException(422,'Ordered date range and aware cutoff required')
+    from datetime import timezone
+    cutoff=as_of or datetime.max.replace(tzinfo=timezone.utc)
+    continuous=chart_store(db,'NQ1! Raw')
+    return continuous.query('NQ1! Raw','''SELECT * FROM gaps WHERE trading_date>=? AND trading_date<=?
+        AND CAST(end_exclusive_utc AS TIMESTAMPTZ)<=? ORDER BY start_utc LIMIT ? OFFSET ?''',
+        [start.isoformat(),end.isoformat(),cutoff,limit,offset])

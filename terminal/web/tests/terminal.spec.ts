@@ -64,7 +64,7 @@ test("real historical session, timeframes, replay, and explorer", async ({
   expect(await page.getByTestId("replay-cursor").textContent()).toBe(paused);
   await page.getByRole("tab", { name: "Strategy Research" }).click();
   await expect(page.locator(".inactive-panel")).toContainText(
-    "Inactive in v0.2",
+    "hidden during chart replay",
   );
   await page.getByRole("tab", { name: "Data Explorer" }).click();
   await page.getByRole("button", { name: "Exit", exact: true }).click();

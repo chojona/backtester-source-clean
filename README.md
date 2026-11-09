@@ -1,6 +1,6 @@
 # Futures research backtester and NQ Research Terminal
 
-Source-only Python tools for futures backtesting, causal intraday research, realized-volatility analysis, and a local read-only **NQ Research Terminal v0.2**. Market records, credentials, fitted models, and generated research outputs are not bundled.
+Source-only Python tools for futures backtesting, causal intraday research, realized-volatility analysis, and a local **NQ Research Terminal v0.3** with read-only release access. Market records, credentials, fitted models, and generated research outputs are not bundled.
 
 The Python engine and the terminal are separate workflows. The engine accepts user-supplied inputs or explicitly constructed software examples. The terminal requires an existing sealed `nq-ohlcv-research-v2.0.0` release and never substitutes demo candles.
 
@@ -72,4 +72,4 @@ Bar-open timestamps and decision-time availability are distinct. Terminal replay
 
 Provider access requires separately obtained credentials and data rights. There is no live trading or brokerage connection. Keep source datasets, provider responses, calendars, private evidence, screenshots of market data, and generated reports outside Git; see the [publication rules](PUBLIC_EXPORT.md).
 
-The [v0.2 implementation report](terminal/IMPLEMENTATION_V0_2.md) records the terminal changes and verification performed for that release.
+The [v0.3 implementation report](terminal/IMPLEMENTATION_V03.md) describes the VWAP workspace and synthetic demo. The [continuous chart guide](terminal/CONTINUOUS.md) covers Raw and Adjusted history, roll uncertainty, and intraday loading. Historical strategy execution remains blocked. [Research review status](docs/RESEARCH_REVIEW_STATUS.md)

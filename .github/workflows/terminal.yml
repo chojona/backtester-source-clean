@@ -1,0 +1,38 @@
+name: Terminal integration
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  synthetic-terminal:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: terminal/web/package-lock.json
+      - run: python -m pip install -r terminal/requirements.txt
+      - run: python -m pytest terminal/tests -q
+      - run: npm ci
+        working-directory: terminal/web
+      - run: npm run typecheck && npm run build
+        working-directory: terminal/web
+      - run: npx playwright install --with-deps chromium
+        working-directory: terminal/web
+      - name: Test production frontend against a temporary synthetic release
+        env:
+          NQ_BROWSER_FIXTURE: '1'
+        run: |
+          python -m terminal.tests.serve_synthetic > "$RUNNER_TEMP/nq-api.log" 2>&1 &
+          api_pid=$!
+          (cd terminal/web && exec node node_modules/next/dist/bin/next start --hostname 127.0.0.1) > "$RUNNER_TEMP/nq-web.log" 2>&1 &
+          web_pid=$!
+          trap 'kill "$api_pid" "$web_pid" 2>/dev/null || true' EXIT
+          curl --silent --show-error --fail --retry 30 --retry-delay 1 --retry-connrefused +            http://127.0.0.1:3000/api/health || { cat "$RUNNER_TEMP/nq-api.log" "$RUNNER_TEMP/nq-web.log"; exit 1; }
+          cd terminal/web
+          npm run test:smoke -- intraday.spec.ts research.spec.ts -g 'constructed intraday fixture|research'
+          npm run test:smoke -- v02.spec.ts continuous.spec.ts -g 'price/time projection|indicator lines'
