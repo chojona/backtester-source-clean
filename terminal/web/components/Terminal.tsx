@@ -92,7 +92,7 @@ export default function Terminal() {
       ...defaultWorkspace,
       ...state,
       width: Math.max(240, Math.min(600, state.width || 290)),
-      height: Math.max(260, Math.min(1000, state.height || 480)),
+      height: Math.max(260, Math.min(1000, state.height || defaultWorkspace.height)),
       bottom: Math.max(180, Math.min(900, state.bottom || 300)),
     });
     setReady(true);
@@ -473,14 +473,8 @@ export default function Terminal() {
         >
           <section className="market-main">
             <div className={layout.fullscreen ? "chart-panel workspace-fullscreen" : "chart-panel"} ref={chartPanel}>
+              <div className="chart-command-bar">
               <div className="chart-toolbar">
-                <div className="instrument">
-                  <div className="instrument-icon">NQ</div>
-                  <div>
-                    <b>E-mini Nasdaq-100</b>
-                    <span>CME · Futures</span>
-                  </div>
-                </div>
                 <div className="selector-group">
                   <label className="select-wrap">
                     <span>CONTRACT</span>
@@ -570,7 +564,7 @@ export default function Terminal() {
                     aria-pressed={vwap}
                     onClick={() => setVwap(!vwap)}
                   >
-                    <span className="dot gold" />
+                    <span className="dot" style={{ backgroundColor: settings.vwap.color }} />
                     VWAP
                   </button>
                   <button
@@ -586,7 +580,7 @@ export default function Terminal() {
                     aria-pressed={opening}
                     onClick={() => setOpening(!opening)}
                   >
-                    <span className="dot blue" />
+                    <span className="dot" style={{ backgroundColor: settings.opening.color }} />
                     OR {settings.openingMinutes}m
                   </button>
                 </div>
@@ -628,10 +622,11 @@ export default function Terminal() {
                   <summary>Shortcuts</summary>
                   <span>
                     Space: play/pause · →: bar · F: fullscreen · Esc: cancel ·
-                    Delete: drawing
+                    Delete: drawing · Ctrl/⌘+Z: undo drawing
                   </span>
                 </details>
                 <span>{storageWarning}</span>
+              </div>
               </div>
               <div className="chart-stage">
                 <MarketChart

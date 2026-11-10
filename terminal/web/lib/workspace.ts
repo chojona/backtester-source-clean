@@ -4,9 +4,9 @@ export type Indicators = Record<
   Indicator
 > & { openingMinutes: number; deviations: number };
 export const defaultIndicators: Indicators = {
-  vwap: { visible: true, color: "#deb568", style: 0 },
-  levels: { visible: true, color: "#657793", style: 2 },
-  opening: { visible: true, color: "#779bea", style: 0 },
+  vwap: { visible: true, color: "#356bff", style: 0 },
+  levels: { visible: true, color: "#b4d6f4", style: 0 },
+  opening: { visible: true, color: "#93bde5", style: 0 },
   bands: { visible: false, color: "#65a89a", style: 2 },
   boundaries: { visible: true, color: "#465675", style: 2 },
   openingMinutes: 30,
@@ -32,7 +32,7 @@ export const defaultWorkspace: Workspace = {
   frame: "1m",
   display: "Globex",
   width: 290,
-  height: 480,
+  height: 620,
   bottom: 300,
   analytics: true,
   explorer: true,
@@ -146,6 +146,14 @@ export function normalizeWorkspace(input: unknown): Workspace {
           : defaultIndicators[key].style,
     };
   }
+  // Recognize the old stock palette as a group so saved custom palettes survive.
+  if (indicators.vwap.color === "#deb568" && indicators.levels.color === "#657793" &&
+      indicators.opening.color === "#779bea") {
+    indicators.vwap.color = defaultIndicators.vwap.color;
+    indicators.levels.color = defaultIndicators.levels.color;
+    indicators.opening.color = defaultIndicators.opening.color;
+    if (indicators.levels.style === 2) indicators.levels.style = defaultIndicators.levels.style;
+  }
   indicators.openingMinutes = Math.round(
     number(raw.indicators?.openingMinutes, 30, 1, 120),
   );
@@ -159,7 +167,7 @@ export function normalizeWorkspace(input: unknown): Workspace {
       : "1m",
     display: raw.display === "RTH" ? "RTH" : "Globex",
     width: number(raw.width, 290, 240, 600),
-    height: number(raw.height, 480, 260, 1000),
+    height: number(raw.height, defaultWorkspace.height, 260, 1000),
     bottom: number(raw.bottom, 300, 180, 900),
     analytics: typeof raw.analytics === "boolean" ? raw.analytics : true,
     explorer: typeof raw.explorer === "boolean" ? raw.explorer : true,
