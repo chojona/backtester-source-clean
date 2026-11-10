@@ -1,11 +1,12 @@
 "use client";
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import {
   CandlestickSeries,
   HistogramSeries,
   LineSeries,
   createChart,
   ColorType,
+  CrosshairMode,
   LineStyle,
   TickMarkType,
   type IChartApi,
@@ -13,6 +14,7 @@ import {
   type LogicalRange,
   type UTCTimestamp,
 } from "lightweight-charts";
+import { ChevronDown, Maximize } from "lucide-react";
 import { Bar, Snapshot, fmt, clock } from "@/lib/types";
 import Drawings from "./Drawings";
 import ResearchOverlay from "./ResearchOverlay";
@@ -22,7 +24,7 @@ import { useChartHistory } from "@/lib/useChartHistory";
 import type { SeriesIdentity } from "@/lib/chartWindow";
 import ContinuousQuality from "./ContinuousQuality";
 import AuctionTools from "./AuctionTools";
-import { Indicators, readLocal, writeLocal } from "@/lib/workspace";
+import { defaultIndicators, Indicators, readLocal, writeLocal } from "@/lib/workspace";
 
 function atOrBefore(bars: Bar[], time: number) {
   let first = 0, last = bars.length;
@@ -32,6 +34,18 @@ function atOrBefore(bars: Bar[], time: number) {
     else last = middle;
   }
   return bars[first - 1];
+}
+
+const candleColors = {
+  bullish: { body: "#30b66f", muted: "#65917a" },
+  bearish: { body: "#ed626a", muted: "#ab777b" },
+  flat: { body: "#ababab", muted: "#888888" },
+};
+
+function candleDirection(bar: Bar) {
+  if (bar.close > bar.open) return "bullish";
+  if (bar.close < bar.open) return "bearish";
+  return "flat";
 }
 
 type Viewport = { from: UTCTimestamp; to: UTCTimestamp; day?: string };
@@ -97,6 +111,9 @@ export default function MarketChart({
   dataRef.current = data;
   const drawingTools=useRef<HTMLDivElement>(null);
   const auctionTools = useRef<HTMLDivElement>(null);
+  const drawingRail = useRef<HTMLDivElement>(null);
+  const [detailsOpen, setDetailsOpen] = useState(false);
+  const detailsId = useId();
   const identity = useRef("");
   const savedViewport = useRef<Viewport | null>(null);
   const restoreViewport = useRef<typeof savedViewport.current>(null);
@@ -116,22 +133,23 @@ export default function MarketChart({
     const c = createChart(host.current, {
       autoSize: true,
       layout: {
-        background: { type: ColorType.Solid, color: "#0c1119" },
-        textColor: "#7c899d",
-        fontFamily: "ui-monospace, SFMono-Regular, monospace",
-        fontSize: 11,
+        background: { type: ColorType.Solid, color: "#303030" },
+        textColor: "#d0d0d0",
+        fontFamily: "Arial, Helvetica, sans-serif",
+        fontSize: 12,
+        panes: { separatorColor: "#838383", separatorHoverColor: "#aaa" },
         attributionLogo: true,
       },
       grid: {
-        vertLines: { color: "#161e2a" },
-        horzLines: { color: "#161e2a" },
+        vertLines: { visible: false },
+        horzLines: { visible: false },
       },
       rightPriceScale: {
-        borderColor: "#202b3a",
-        scaleMargins: { top: 0.09, bottom: 0.24 },
+        borderColor: "#424242",
+        scaleMargins: { top: 0.10, bottom: 0.08 },
       },
       timeScale: {
-        borderColor: "#202b3a",
+        borderColor: "#424242",
         timeVisible: true,
         secondsVisible: false,
         rightOffset: 8,
@@ -150,42 +168,43 @@ export default function MarketChart({
           `${new Date(time * 1000).toLocaleDateString("en-US", { timeZone: "America/New_York" })} ${clock(time)} ET`,
       },
       crosshair: {
-        vertLine: { color: "#677489", labelBackgroundColor: "#2a384c" },
-        horzLine: { color: "#677489", labelBackgroundColor: "#2a384c" },
+        mode: CrosshairMode.Normal,
+        vertLine: { color: "#e4e4e4", style: LineStyle.Dashed, labelBackgroundColor: "#202020" },
+        horzLine: { color: "#e4e4e4", style: LineStyle.Dashed, labelBackgroundColor: "#202020" },
       },
     });
     const candles = c.addSeries(CandlestickSeries, {
-      upColor: "#32bca4",
-      downColor: "#ef6c7c",
-      wickUpColor: "#32bca4",
-      wickDownColor: "#ef6c7c",
+      upColor: candleColors.bullish.body,
+      downColor: candleColors.bearish.body,
+      wickUpColor: candleColors.bullish.body,
+      wickDownColor: candleColors.bearish.body,
+      priceFormat: { type: "price", precision: 2, minMove: .25 },
+      priceLineStyle: LineStyle.Dotted,
       borderVisible: false,
     });
     const volume = c.addSeries(HistogramSeries, {
       priceFormat: { type: "volume" },
-      priceScaleId: "vol",
-      lastValueVisible: false,
       priceLineVisible: false,
-    });
-    volume
-      .priceScale()
-      .applyOptions({ scaleMargins: { top: 0.82, bottom: 0 } });
-    const line = (color: string) =>
+    }, 1);
+    candles.getPane().setStretchFactor(.85);
+    volume.getPane().setStretchFactor(.15);
+    volume.priceScale().applyOptions({ scaleMargins: { top: .12, bottom: 0 } });
+    const line = (color: string, showPrice = false) =>
       c.addSeries(LineSeries, {
         color,
         lineWidth: 1,
         priceLineVisible: false,
-        lastValueVisible: false,
+        lastValueVisible: showPrice,
         crosshairMarkerVisible: false,
       });
     series.current = {
       candles,
       volume,
-      vwap: line("#deb568"),
-      oh: line("#779bea"),
-      ol: line("#779bea"),
-      upper: line("#65a89a"),
-      lower: line("#65a89a"),
+      vwap: line(defaultIndicators.vwap.color, true),
+      oh: line(defaultIndicators.opening.color),
+      ol: line(defaultIndicators.opening.color),
+      upper: line(defaultIndicators.bands.color),
+      lower: line(defaultIndicators.bands.color),
     };
     chart.current = c;
     setApis({ chart: c, series: candles });
@@ -292,7 +311,15 @@ export default function MarketChart({
     const prior = lastReplay.current;
     updating.current = true;
     if (!data) setHover(null);
-    const candles=bars.map(b=>({open:b.open,high:b.high,low:b.low,close:b.close,time:b.time as UTCTimestamp,color:b.eligible_full_session===false?'#637084':undefined,wickColor:b.eligible_full_session===false?'#637084':undefined}));
+    const candles = bars.map(b => {
+      const direction = candleDirection(b);
+      const colors = candleColors[direction];
+      const override = b.eligible_full_session === false ? colors.muted : direction === "flat" ? colors.body : undefined;
+      return {
+        open: b.open, high: b.high, low: b.low, close: b.close, time: b.time as UTCTimestamp,
+        color: override, wickColor: override,
+      };
+    });
     const times=new Set(bars.map(b=>b.time));
     const missing=data?.timeframe==='1m' ? [...new Set((data?.continuous?.gaps||[]).map(g=>Math.floor(Date.parse(g.start_utc)/1000)))].filter(t=>!times.has(t)) : [];
     s.candles.setData([...candles,...missing.map(time=>({time:time as UTCTimestamp}))].sort((a,b)=>Number(a.time)-Number(b.time)));
@@ -300,7 +327,7 @@ export default function MarketChart({
       bars.map((b) => ({
         time: b.time as UTCTimestamp,
         value: b.volume,
-        color: b.close >= b.open ? "#32bca435" : "#ef6c7c35",
+        color: candleColors[candleDirection(b)].body + "88",
       })),
     );
     for (const [key, field] of [
@@ -327,7 +354,14 @@ export default function MarketChart({
       if (replay) {
         const to = Math.max(96, bars.length + 5);
         scale.setVisibleLogicalRange({ from: to - 96, to });
-      } else scale.fitContent();
+      } else {
+        const last = bars.at(-1);
+        const end = last ? scale.timeToIndex(last.time as UTCTimestamp) : null;
+        const visibleBars = Math.max(96, Math.floor(c.paneSize(0).width / 3.5));
+        if (data?.timeframe !== "daily" && end !== null && end > visibleBars && !restoreViewport.current) {
+          scale.setVisibleLogicalRange({ from: end + 8 - visibleBars, to: end + 8 });
+        } else scale.fitContent();
+      }
     } else if (beforeRange) {
       for (const anchor of anchors) {
         const index = scale.timeToIndex(anchor.time);
@@ -428,102 +462,128 @@ export default function MarketChart({
       }
     return () => lines.forEach((l) => s.candles.removePriceLine(l));
   }, [previous?.high, previous?.low, levels, settings.levels]);
+  const emptyHistory = Boolean(history.edges && data?.bars.length === 0 && !history.pending && !history.failed);
+  const fitHistory = () => {
+    const c = chart.current;
+    if (!c) return;
+    c.priceScale("right").applyOptions({ autoScale: true });
+    c.timeScale().fitContent();
+  };
+
   return (
     <div className="chart-wrap clean-chart">
       <div className="chart-header">
-      {data?.continuous && <ContinuousQuality data={data} />}
-      <div className="chart-readout">
-        <span className="chart-symbol">
-          {data?.contract || "NQ"}{" "}
-          <span>· {data?.timeframe || "1m"} · CME</span>
-        </span>
-        <div className="ohlc">
-          {(["open", "high", "low", "close"] as const).map((k, i) => (
-            <span key={k}>
-              {["O", "H", "L", "C"][i]}{" "}
-              <b className={k === "close" ? "teal" : ""}>{fmt(active?.[k])}</b>
+        <div className="chart-summary">
+          <div className="chart-readout">
+            <span className="chart-symbol" title="Nasdaq-100 E-mini Futures · CME">
+              <span className="chart-instrument-mark" aria-hidden="true">100</span>
+              {data?.contract || "NQ"} <span>· {data?.timeframe || "1m"}</span>
             </span>
-          ))}
-          <span>
-            Vol <b>{fmt(active?.volume, 0)}</b>
-          </span>
+            <div className="ohlc">
+              {(["open", "high", "low", "close"] as const).map((key, i) => (
+                <span key={key}>
+                  {["O", "H", "L", "C"][i]} <b>{fmt(active?.[key])}</b>
+                </span>
+              ))}
+              <span>Vol <b>{fmt(active?.volume, 0)}</b></span>
+            </div>
+          </div>
+          <div className="chart-actions">
+            <button type="button" className="chart-action" aria-label="Fit history" title="Fit history" onClick={fitHistory}>
+              <Maximize size={13} />
+            </button>
+            <div className="auction-toolbar" ref={auctionTools} />
+            <button type="button" className="chart-action" aria-label="Chart details"
+              aria-controls={detailsId} aria-expanded={detailsOpen} onClick={() => setDetailsOpen(open => !open)}>
+              Details <ChevronDown size={12} />
+            </button>
+          </div>
         </div>
-      </div>
-      {data?.continuous && <div className="continuous-readout" data-testid="continuous-readout" title={`Raw OHLC ${active?.raw_open}, ${active?.raw_high}, ${active?.raw_low}, ${active?.raw_close}; offset ${active?.adjustment_offset}; Roll ${active?.roll_id || 'initial'}; adjustment ${active?.adjustment_status || 'unadjusted'}`}>
-        Source {active?.source_contract || data.continuous.source_contract} · raw close {fmt(active?.raw_close)} · offset {fmt(active?.adjustment_offset)} · {active?.retrospective ? `retrospective block ${active?.adjustment_block_id}` : 'unadjusted'} · {active?.eligible_full_session ? 'research eligible (not certified)' : 'research ineligible'}
-
-      </div>}
-      <div className="chart-legend">
-        {vwap && (
-          <span>
-            <i className="dot gold" />
-            Session VWAP <b>{fmt(active?.vwap)}</b>
-          </span>
-        )}
-        {opening && (
-          <span>
-            <i className="dot blue" />
-            Opening range · {settings.openingMinutes}m
-          </span>
-        )}
-        {levels && (
-          <span>
-            <i className="dot gray" />
-            Previous session H/L
-          </span>
-        )}
-      </div>
-      <div className="chart-view-controls">
-        {data?.continuous && <span className="coverage-label" data-testid="continuous-coverage">{data.bars.length ? `${data.bars[0].trading_date} → ${data.bars.at(-1)?.trading_date}` : 'No observations'} · {data.continuous.history_sessions.toLocaleString()} sessions</span>}
-        {!data?.continuous && history.window && <span className="coverage-label" data-testid="chart-history-coverage">
-          {history.window.session_dates[0]} → {history.window.session_dates.at(-1)} · {history.window.session_dates.length} sessions
-        </span>}
-        <div><button onClick={()=>{const c=chart.current;if(c){c.priceScale('right').applyOptions({autoScale:true});c.timeScale().fitContent();}}}>Fit history</button>
-        {data?.continuous && <label className="roll-toggle"><input aria-label="Show rollovers" type="checkbox" checked={rollsVisible} onChange={e=>{setRollsVisible(e.target.checked);writeLocal("nq:v3:show-rolls",e.target.checked);}}/> Rollovers</label>}</div>
-      </div>
-      {history.enabled && <div className="chart-view-controls" role="status" data-testid="intraday-history">
-        {history.pending ? (history.pending === "initial" ? "Loading chart history…" : `Loading ${history.pending} sessions…`) :
-          history.failed ? <span>Could not load {history.failed} sessions. <button onClick={() => void history.load(history.failed!)}>Retry history</button>
-            {history.failed !== "initial" && <button onClick={() => void history.load("initial")}>Reload history</button>}</span> :
-          history.edges?.older && history.edges?.newer ? "All available history edges reached." :
-          history.edges?.older ? "Earliest session reached. Pan right for later sessions." :
-          history.edges?.newer ? "Latest session reached. Pan left for earlier sessions." :
-          "Pan at either edge to load more historical sessions."}
-        {history.edges && data?.bars.length === 0 && !history.pending && !history.failed && <div>
-          {!history.edges.older && <button onClick={() => void history.load("older")}>Older sessions</button>}
-          {!history.edges.newer && <button onClick={() => void history.load("newer")}>Newer sessions</button>}
+        <div className="chart-details" id={detailsId} hidden={!detailsOpen}>
+          {(vwap || opening || levels) && <section className="chart-detail-group">
+            <h3>Indicators</h3>
+            <div className="chart-legend">
+              {vwap && <span><i className="dot" style={{ backgroundColor: settings.vwap.color }} />
+                Session VWAP <b>{fmt(active?.vwap)}</b></span>}
+              {opening && <span><i className="dot" style={{ backgroundColor: settings.opening.color }} />
+                Opening range · {settings.openingMinutes}m</span>}
+              {levels && <span><i className="dot" style={{ backgroundColor: settings.levels.color }} />
+                Previous session H/L</span>}
+            </div>
+          </section>}
+          {(data?.continuous || history.window) && <section className="chart-detail-group">
+            <h3>History</h3>
+            <div className="chart-view-controls">
+              {data?.continuous && <span className="coverage-label" data-testid="continuous-coverage">
+                {data.bars.length ? `${data.bars[0].trading_date} → ${data.bars.at(-1)?.trading_date}` : "No observations"} · {data.continuous.history_sessions.toLocaleString()} sessions
+              </span>}
+              {!data?.continuous && history.window && <span className="coverage-label" data-testid="chart-history-coverage">
+                {history.window.session_dates[0]} → {history.window.session_dates.at(-1)} · {history.window.session_dates.length} sessions
+              </span>}
+              {data?.continuous && <label className="roll-toggle">
+                <input aria-label="Show rollovers" type="checkbox" checked={rollsVisible} onChange={e => {
+                  setRollsVisible(e.target.checked);
+                  writeLocal("nq:v3:show-rolls", e.target.checked);
+                }} /> Rollovers
+              </label>}
+            </div>
+          </section>}
+          {data?.continuous && <section className="chart-detail-group chart-source-strip">
+            <h3>Data source</h3>
+            <div className="continuous-readout" data-testid="continuous-readout"
+              title={`Raw OHLC ${active?.raw_open}, ${active?.raw_high}, ${active?.raw_low}, ${active?.raw_close}; roll ${active?.roll_id || "initial"}`}>
+              {active?.source_contract || data.continuous.source_contract} · raw close {fmt(active?.raw_close)} · offset {fmt(active?.adjustment_offset)}
+              {" · "}{active?.retrospective ? `retrospective block ${active?.adjustment_block_id}` : "unadjusted"}
+              {" · "}{active?.eligible_full_session ? "research eligible (not certified)" : "research ineligible"}
+            </div>
+            <ContinuousQuality data={data} />
+          </section>}
+          <section className="chart-detail-group">
+            <h3>Drawings</h3>
+            <div className="chart-drawing-tools" ref={drawingTools} />
+          </section>
+        </div>
+        {history.enabled && <div className="chart-view-controls chart-history-notice" role="status" data-testid="intraday-history"
+          hidden={!detailsOpen && !history.failed && !emptyHistory}>
+          {history.pending ? (history.pending === "initial" ? "Loading chart history…" : `Loading ${history.pending} sessions…`) :
+            history.failed ? <span>Could not load {history.failed} sessions. <button onClick={() => void history.load(history.failed!)}>Retry history</button>
+              {history.failed !== "initial" && <button onClick={() => void history.load("initial")}>Reload history</button>}</span> :
+            history.edges?.older && history.edges?.newer ? "All available history edges reached." :
+            history.edges?.older ? "Earliest session reached. Pan right for later sessions." :
+            history.edges?.newer ? "Latest session reached. Pan left for earlier sessions." :
+            "Pan at either edge to load more historical sessions."}
+          {emptyHistory && <div>
+            {!history.edges?.older && <button onClick={() => void history.load("older")}>Older sessions</button>}
+            {!history.edges?.newer && <button onClick={() => void history.load("newer")}>Newer sessions</button>}
+          </div>}
         </div>}
-      </div>}
-      <div className="chart-object-controls">
-        <div className="chart-drawing-tools" ref={drawingTools} />
-        <div className="auction-toolbar" ref={auctionTools} />
       </div>
-      </div>
-      <div className="chart-plot">
-      <div
-        ref={host}
-        className="chart-canvas"
-        aria-label="Historical NQ candlestick chart"
-        data-testid="market-chart"
-      />
-      {apis && (<>
-        <AuctionTools chart={apis.chart} series={apis.series} selected={baseData} data={data}
-          identity={chartSeries} replay={replay} target={auctionTools.current} />
-        <ResearchOverlay chart={apis.chart} series={apis.series} data={data} replay={replay} datasetHash={datasetHash} />
-        {rollsVisible && <ContinuousOverlay chart={apis.chart} series={apis.series} data={data} host={host.current} />}
-        <Drawings
-          chartSeries={chartSeries}
-          replay={replay}
-          chart={apis.chart}
-          series={apis.series}
-          data={data}
-          settings={settings}
-          toolbarTarget={drawingTools.current}
-        />
-      </>)}
-      <div className="chart-watermark">
-        NQ<span>NASDAQ 100 FUTURES</span>
-      </div>
+      <div className="chart-body">
+        <div className="chart-drawing-rail" ref={drawingRail} />
+        <div className="chart-plot">
+          <div
+            ref={host}
+            className="chart-canvas"
+            aria-label="Historical NQ candlestick chart"
+            data-testid="market-chart"
+          />
+          {apis && <>
+            <AuctionTools chart={apis.chart} series={apis.series} selected={baseData} data={data}
+              identity={chartSeries} replay={replay} target={auctionTools.current} />
+            <ResearchOverlay chart={apis.chart} series={apis.series} data={data} replay={replay} datasetHash={datasetHash} />
+            {rollsVisible && <ContinuousOverlay chart={apis.chart} series={apis.series} data={data} host={host.current} />}
+            <Drawings
+              chartSeries={chartSeries}
+              replay={replay}
+              chart={apis.chart}
+              series={apis.series}
+              data={data}
+              settings={settings}
+              toolbarTarget={drawingTools.current}
+              railTarget={drawingRail.current}
+            />
+          </>}
+        </div>
       </div>
     </div>
   );

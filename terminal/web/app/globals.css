@@ -1845,7 +1845,6 @@ tbody tr:hover {
 .quality-dialog {margin:auto;}
 @media(max-width:600px){.clean-chart{min-height:max(510px,var(--chart-height,480px));}}
 
-.chart-object-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .auction-toolbar { display: inline-flex; }
 .auction-toolbar button, .auction-tools button {
   color: #b9cce5; background: #132236; border: 1px solid #324862; border-radius: 4px;
@@ -1871,3 +1870,157 @@ tbody tr:hover {
 .auction-provenance summary { cursor: pointer; }
 .auction-provenance dd { overflow-wrap: anywhere; }
 .auction-tools [role="alert"] { color: #f3b2a8; }
+
+/* Chart workspace palette and shared command bar. */
+.chart-panel {
+  --chart-chrome: #0b0b0b;
+  --chart-divider: #414141;
+  --chart-muted: #b1b1b1;
+  border-color: var(--chart-divider);
+  background: var(--chart-chrome);
+}
+.chart-command-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 12px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--chart-divider);
+}
+.chart-command-bar .chart-toolbar,
+.chart-command-bar .chart-options,
+.chart-command-bar .workspace-actions {
+  height: auto;
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  gap: 6px;
+}
+.chart-command-bar .chart-options > button:last-child {
+  position: static;
+  margin-left: 0;
+}
+.chart-command-bar .selector-group { gap: 7px; }
+.chart-command-bar .selector-group > i { background: var(--chart-divider); }
+.chart-command-bar .select-wrap { gap: 1px; }
+.chart-command-bar .select-wrap > span { color: #a0a0a0; }
+.chart-command-bar .select-wrap select,
+.chart-command-bar .chart-options > select {
+  padding: 3px 6px;
+  border: 1px solid #3e3e3e;
+  border-radius: 4px;
+  background: #212121;
+  color: #e0e0e0;
+}
+.chart-command-bar .timeframes { width: auto; }
+.chart-command-bar .timeframes button { font-size: 11px; color: var(--chart-muted); }
+.chart-command-bar .timeframes button.active { background: #373737; color: #fff; }
+.chart-command-bar .indicator-toggles { gap: 4px; padding-left: 6px; border-color: var(--chart-divider); }
+.chart-command-bar .indicator-toggles button { color: #858585; }
+.chart-command-bar .indicator-toggles button.on { color: #d2d2d2; }
+.chart-command-bar .workspace-actions button,
+.chart-panel .chart-view-controls button,
+.chart-panel .quality-trigger,
+.chart-panel .auction-toolbar button,
+.chart-panel .drawing-toolbar select,
+.chart-panel .drawing-toolbar details {
+  border-color: var(--chart-divider);
+  background: #1b1b1b;
+  color: #ddd;
+}
+.chart-header {
+  gap: 0;
+  padding: 7px 10px;
+  background: #292929;
+  border-color: var(--chart-divider);
+}
+.clean-chart .chart-readout { justify-content: flex-start; align-items: center; gap: 5px 16px; }
+.clean-chart .chart-symbol {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+  font: 500 13px/1.4 Arial, Helvetica, sans-serif;
+  color: #f3f3f3;
+}
+.clean-chart .chart-symbol > span { color: #bbb; }
+.clean-chart .chart-symbol .chart-instrument-mark {
+  display: inline-grid;
+  place-items: center;
+  width: 21px;
+  height: 21px;
+  border-radius: 50%;
+  background: #087c9d;
+  color: #fff;
+  font-size: 9px;
+  font-weight: 700;
+}
+.clean-chart .ohlc { font: 11px/1.4 Arial, Helvetica, sans-serif; color: var(--chart-muted); }
+.clean-chart .ohlc b, .clean-chart .chart-legend b { color: #e3e3e3; font-variant-numeric: tabular-nums; }
+.chart-summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px 12px;
+}
+.chart-actions { display: flex; align-items: center; gap: 4px; }
+.chart-panel .chart-actions .chart-action,
+.chart-panel .chart-actions .auction-toolbar button {
+  min-height: 27px;
+  padding: 3px 7px;
+  background: transparent;
+  border: 1px solid transparent;
+  color: #d8d8d8;
+  font-size: 11px;
+}
+.chart-panel .chart-actions button:hover,
+.chart-panel .chart-actions button[aria-expanded="true"] {
+  background: #373737;
+  border-color: #494949;
+}
+.chart-actions button[aria-expanded="true"] svg { transform: rotate(180deg); }
+.chart-details {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 180px), 1fr));
+  gap: 10px 16px;
+  margin-top: 7px;
+  padding-top: 8px;
+  border-top: 1px solid var(--chart-divider);
+}
+.chart-detail-group { display: grid; align-content: start; gap: 4px; min-width: 0; }
+.chart-detail-group h3 { margin: 0; color: #e3e3e3; font-size: 11px; font-weight: 600; }
+.chart-detail-group .chart-legend { display: grid; gap: 2px; }
+.chart-detail-group .chart-view-controls { justify-content: flex-start; gap: 5px 9px; }
+.chart-history-notice { padding-top: 6px; }
+.chart-source-strip .quality-access { padding: 0; gap: 5px; border: 0; }
+.chart-source-strip .quality-status,
+.clean-chart .continuous-readout,
+.chart-panel .chart-view-controls,
+.chart-panel .chart-view-controls .coverage-label,
+.clean-chart .chart-legend { color: var(--chart-muted); }
+.chart-panel .chart-view-controls button,
+.chart-panel .quality-trigger { padding: 3px 6px; }
+.chart-body { display: flex; flex: 1; min-width: 0; }
+.chart-drawing-rail { flex: 0 0 42px; background: var(--chart-chrome); border-right: 1px solid var(--chart-divider); }
+.drawing-rail-buttons { display: flex; flex-direction: column; gap: 4px; padding: 5px 4px; }
+.drawing-rail-buttons button { width: 33px; height: 33px; color: #b5b5b5; }
+.drawing-rail-buttons button:hover,
+.drawing-rail-buttons button[aria-pressed="true"] { background: #343434; color: #fff; }
+.chart-panel .replay-bar {
+  min-height: 42px;
+  padding: 6px 10px;
+  background: var(--chart-chrome);
+  border-color: var(--chart-divider);
+}
+.chart-panel:fullscreen, .chart-panel.workspace-fullscreen { display: flex; flex-direction: column; background: var(--chart-chrome); }
+.chart-panel:fullscreen .chart-stage, .workspace-fullscreen .chart-stage { display: flex; flex: 1; }
+.chart-panel:fullscreen .chart-wrap, .workspace-fullscreen .chart-wrap { flex: 1; height: auto; min-height: 0; min-width: 0; }
+
+@media (max-width: 600px) {
+  .chart-drawing-rail { display: none; }
+  .chart-summary .chart-readout { flex: 1 1 100%; }
+  .chart-summary .chart-actions { margin-left: auto; }
+  .chart-command-bar .chart-toolbar { flex: 1 1 100%; }
+  .chart-command-bar .indicator-toggles { padding-left: 0; }
+}

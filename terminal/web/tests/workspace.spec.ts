@@ -56,3 +56,53 @@ test("constructed workspace starts and remains usable when local storage is deni
   await page.getByRole("button", { name: "5m", exact: true }).click();
   await expect(page.locator(".chart-symbol")).toContainText("5m");
 });
+
+test("chart undo groups a drawing drag and restores a deletion without intercepting text input", async ({ page }) => {
+  test.skip(process.env.NQ_BROWSER_FIXTURE !== "1", "Requires the formula-only terminal fixture");
+  await page.goto("/");
+  await page.getByLabel("Contract", { exact: true }).selectOption("NQH26");
+  await page.getByLabel("Session date", { exact: true }).selectOption("2026-03-13");
+  await expect(page.getByTestId("chart-history-coverage")).toContainText("2 sessions");
+  const chart = page.getByTestId("market-chart");
+  const drawing = page.locator(".drawing-object");
+  const stored = () => page.evaluate(() => {
+    const key = Object.keys(localStorage).find(name => name.startsWith('nq:v3:drawings:["NQH26"'));
+    return key ? localStorage.getItem(key) : null;
+  });
+
+  await page.getByRole("button", { name: "Horizontal level", exact: true }).click();
+  const box = (await chart.boundingBox())!;
+  await page.mouse.click(box.x + box.width * .35, box.y + box.height * .35);
+  await expect(drawing).toHaveCount(1);
+  const original = await stored();
+  expect(original).toBeTruthy();
+
+  const handle = (await drawing.locator("circle").last().boundingBox())!;
+  await page.mouse.move(handle.x + handle.width / 2, handle.y + handle.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(handle.x + 22, handle.y + 52, { steps: 8 });
+  await page.mouse.up();
+  await expect.poll(stored).not.toBe(original);
+  await page.keyboard.press("Control+z");
+  await expect.poll(stored).toBe(original);
+
+  await page.getByRole("button", { name: "Chart details" }).click();
+  await page.locator(".drawing-toolbar summary").click();
+  await page.getByRole("button", { name: "horizontal", exact: true }).click();
+  await page.getByLabel("Anchor 1 price", { exact: true }).focus();
+  await page.keyboard.press("Control+z");
+  await expect(drawing).toHaveCount(1);
+  await expect.poll(stored).toBe(original);
+
+  await page.getByRole("button", { name: "Delete horizontal", exact: true }).click();
+  await expect(drawing).toHaveCount(0);
+  await page.keyboard.press("Meta+z");
+  await expect(drawing).toHaveCount(1);
+  await expect.poll(stored).toBe(original);
+
+  await page.keyboard.press("Control+z");
+  await expect(drawing).toHaveCount(0);
+  await page.reload();
+  await expect(page.getByRole("button", { name: "Start replay" })).toBeEnabled();
+  await expect(page.locator(".drawing-toolbar summary")).toHaveText("Objects (0)");
+});

@@ -30,6 +30,8 @@ test("auction controls persist, use the existing chart, and hide future anchors 
   await page.getByLabel("Advanced VWAP").selectOption("manual");
   await page.getByRole("button", { name: "Select anchor on chart" }).click();
   const box = (await chart.boundingBox())!;
+  await page.mouse.click(box.x + box.width * .68, box.y + box.height * .90);
+  await expect(page.getByTestId("auction-anchor")).toHaveCount(0);
   await page.mouse.click(box.x + box.width * .68, box.y + box.height * .46);
   await expect(page.getByTestId("auction-anchor")).toBeVisible();
   await expect(page.getByTestId("auction-vwap")).toContainText("HLC3 estimate");

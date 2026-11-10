@@ -36,6 +36,7 @@ test('continuous raw and adjusted symbols, full chart, metadata and replay guard
   await expect(page.getByTestId('continuous-coverage')).toContainText('4,262 sessions',{timeout:30000});
   await expect(page.getByTestId('market-chart').locator('canvas').first()).toBeVisible();
   await expect(page.getByTestId('roll-marker')).toHaveCount(0);
+  await page.getByRole('button',{name:'Chart details'}).click();
   await page.getByLabel('Show rollovers').check();
   await expect(page.getByTestId('roll-marker')).toHaveCount(66);
   await expect(page.getByTestId('roll-marker').locator('text')).toHaveCount(0);
@@ -56,6 +57,11 @@ test('chart labels and quality details do not overlap at desktop or mobile sizes
   test.skip(process.env.NQ_BROWSER_RELEASE !== '1' || !(await request.get('/api/continuous/manifest')).ok(),'Requires external continuous release');
   await page.goto('/');
   await page.getByLabel('Contract',{exact:true}).selectOption('NQ1! Raw');
+  await expect(page.getByTestId('continuous-readout')).toContainText('unadjusted');
+  const details=page.getByRole('button',{name:'Chart details'});
+  await expect(details).toHaveAttribute('aria-expanded','false');
+  await expect(page.getByTestId('continuous-readout')).toBeHidden();
+  await details.click();
   await expect(page.getByTestId('continuous-readout')).toBeVisible();
   await page.getByLabel('Continuous history').selectOption('5000');
   await expect(page.getByTestId('continuous-coverage')).toContainText('4,262 sessions',{timeout:45000});
@@ -102,7 +108,7 @@ test('full history switches to a usable intraday window and restores on daily',a
   page.on('response',response=>{if(response.url().includes('/api/snapshot')&&!response.ok())badRequests.push(response.url());});
   await page.goto('/');
   await page.getByLabel('Contract',{exact:true}).selectOption('NQ1! Raw');
-  await expect(page.getByTestId('continuous-readout')).toBeVisible();
+  await expect(page.getByTestId('continuous-readout')).toContainText('unadjusted');
   await page.getByLabel('Continuous history').selectOption('5000');
   await expect(page.getByTestId('continuous-coverage')).toContainText('4,262 sessions',{timeout:45000});
   await page.getByRole('button',{name:'1m',exact:true}).click();

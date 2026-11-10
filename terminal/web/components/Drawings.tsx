@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import {createPortal} from "react-dom";
+import { Crosshair, Minus, MoveUpRight, Spline, Square, ListTree, Ruler } from "lucide-react";
 import {
   IChartApi,
   ISeriesApi,
@@ -18,12 +19,24 @@ import {
   visibleDrawings,
   project,
 } from "@/lib/workspace";
+const UNDO_LIMIT = 50;
+const drawingTools = [
+  { id: "select", label: "Select / pan", Icon: Crosshair },
+  { id: "horizontal", label: "Horizontal level", Icon: Minus },
+  { id: "ray", label: "Ray", Icon: MoveUpRight },
+  { id: "trendline", label: "Trendline", Icon: Spline },
+  { id: "rectangle", label: "Rectangle", Icon: Square },
+  { id: "fibonacci", label: "Fibonacci", Icon: ListTree },
+  { id: "range", label: "Price range", Icon: Ruler },
+];
+
 export default function Drawings({
   chart,
   series,
   data,
   settings,
   toolbarTarget,
+  railTarget,
   chartSeries,
   replay,
 }: {
@@ -32,6 +45,7 @@ export default function Drawings({
   data: Snapshot | null;
   settings: Indicators;
   toolbarTarget?: HTMLElement|null;
+  railTarget?: HTMLElement|null;
   chartSeries?: SeriesIdentity;
   replay: boolean;
 }) {
@@ -43,7 +57,10 @@ export default function Drawings({
     [, tick] = useState(0),
     [warning, setWarning] = useState("");
   const svg = useRef<SVGSVGElement>(null),
-    drag = useRef<{ id: string; index: number } | null>(null);
+    drag = useRef<{ id: string; index: number; changed: boolean } | null>(null);
+  const undoHistory = useRef<{ scope: string; entries: { drawings: Drawing[]; asOf: number }[] }>({
+    scope: "", entries: [],
+  });
   const adjusted = data?.contract === "NQ1! Adjusted";
   const key = data && chartSeries
     ? "nq:v3:drawings:" + JSON.stringify([data.contract, data.display, chartSeries.release_id,
@@ -51,6 +68,11 @@ export default function Drawings({
     : "";
   const objects = key && stored.key === key ? stored.drawings : [];
   const asOf = data ? Date.parse(data.as_of) / 1000 : -Infinity;
+  const undoScope = key && data ? JSON.stringify([key, data.session, replay]) : "";
+  useLayoutEffect(() => {
+    if (undoScope && undoScope !== undoHistory.current.scope)
+      undoHistory.current = { scope: undoScope, entries: [] };
+  }, [undoScope]);
   useLayoutEffect(() => {
     if (!key || !data || stored.key === key) return;
     const legacy = adjusted ? null : "nq:v2:drawings:" + data.contract + ":";
@@ -64,25 +86,35 @@ export default function Drawings({
     setSelected("");
     drag.current = null;
   }, [replay, data?.session, data?.timeframe]);
-  const update = (next: Drawing[]) => {
-    if (!key) return;
+  const save = (next: Drawing[]) => {
     setStored({ key, drawings: next });
     if (!writeDrawings(key, next))
       setWarning("Local storage unavailable; drawings last for this visit.");
+  };
+  const update = (next: Drawing[], recordUndo = true) => {
+    if (!undoScope || stored.key !== key) return;
+    if (recordUndo) {
+      const entries = undoHistory.current.entries;
+      entries.push({ drawings: objects, asOf });
+      if (entries.length > UNDO_LIMIT) entries.shift();
+    }
+    save(next);
   };
   useEffect(() => {
     let frame = 0;
     const redraw = () => {
       cancelAnimationFrame(frame);
       frame = requestAnimationFrame(() => {
-        const r = svg.current?.getBoundingClientRect();
-        if (r) setSize({ width: r.width, height: r.height });
+        const { width, height } = chart.paneSize(0);
+        setSize(current => current.width === width && current.height === height ? current : { width, height });
         tick((t) => t + 1);
       });
     };
     chart.timeScale().subscribeVisibleLogicalRangeChange(redraw);
     const host = svg.current?.parentElement;
     const observer = new ResizeObserver(redraw);
+    const pane = series.getPane().getHTMLElement();
+    if (pane) observer.observe(pane);
     if (host) {
       observer.observe(host);
       host.addEventListener("pointermove", redraw);
@@ -96,25 +128,7 @@ export default function Drawings({
       host?.removeEventListener("pointermove", redraw);
       host?.removeEventListener("wheel", redraw);
     };
-  }, [chart, data]);
-  useEffect(() => {
-    const fn = (e: KeyboardEvent) => {
-      if (/INPUT|SELECT|TEXTAREA/.test((e.target as HTMLElement).tagName))
-        return;
-      if (e.key === "Escape") {
-        setPending(null);
-        setTool("select");
-        setSelected("");
-      }
-      if ((e.key === "Delete" || e.key === "Backspace") && selected) {
-        e.preventDefault();
-        update(objects.filter((d) => d.id !== selected));
-        setSelected("");
-      }
-    };
-    document.addEventListener("keydown", fn);
-    return () => document.removeEventListener("keydown", fn);
-  });
+  }, [chart, data, series]);
   const bars = data?.bars || [];
   const indexAfter = (time: number) => {
     let left = 0, right = bars.length;
@@ -145,7 +159,8 @@ export default function Drawings({
     const r = svg.current!.getBoundingClientRect(),
       x = e.clientX - r.left,
       y = e.clientY - r.top;
-    if (x > r.width - 60 || y > r.height * 0.8) return null;
+    const { width, height } = chart.paneSize(0);
+    if (x < 0 || x >= width || y < 0 || y >= height) return null;
     const time = chart.timeScale().coordinateToTime(x),
       price = series.coordinateToPrice(y);
     if (typeof time !== "number" || price === null || !barAt(time) || (replay && time > asOf)) return null;
@@ -156,27 +171,56 @@ export default function Drawings({
   const visible = (replay ? visibleDrawings(objects, asOf) : data ? objects : []).filter(
     drawing => sameBlock(drawing.points, drawing.adjustmentBlock)),
     active = visible.find((d) => d.id === selected);
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      const target = event.target;
+      if (event.defaultPrevented || event.isComposing ||
+          (target instanceof HTMLElement &&
+            (target.isContentEditable || target.closest("input, select, textarea, dialog")))) return;
+
+      if ((event.ctrlKey || event.metaKey) && !event.shiftKey && !event.altKey &&
+          event.key.toLowerCase() === "z" && undoScope) {
+        if (pending) {
+          event.preventDefault();
+          setPending(null);
+          return;
+        }
+        const entry = undoHistory.current.entries.at(-1);
+        if (!entry || (replay && entry.asOf > asOf)) return;
+        event.preventDefault();
+        undoHistory.current.entries.pop();
+        drag.current = null;
+        save(entry.drawings);
+        setSelected("");
+        return;
+      }
+      if (event.key === "Escape") {
+        setPending(null);
+        setTool("select");
+        setSelected("");
+      }
+      if ((event.key === "Delete" || event.key === "Backspace") && active) {
+        event.preventDefault();
+        update(objects.filter(drawing => drawing.id !== active.id));
+        setSelected("");
+      }
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  });
+
+  const selectTool = (next: string) => {
+    setTool(next);
+    setPending(null);
+  };
   const toolbar = (
-<div className="drawing-toolbar">
+      <div className="drawing-toolbar">
         <select
           aria-label="Drawing tool"
           value={tool}
-          onChange={(e) => {
-            setTool(e.target.value);
-            setPending(null);
-          }}
+          onChange={(e) => selectTool(e.target.value)}
         >
-          <option value="select">Select / pan</option>
-          {[
-            "horizontal",
-            "ray",
-            "trendline",
-            "rectangle",
-            "fibonacci",
-            "range",
-          ].map((t) => (
-            <option key={t}>{t}</option>
-          ))}
+          {drawingTools.map(({ id, label }) => <option key={id} value={id}>{label}</option>)}
         </select>
         <details>
           <summary>Objects ({visible.length})</summary>
@@ -220,7 +264,7 @@ export default function Drawings({
                       value={new Date(p.time * 1000).toISOString().slice(0, 16)}
                       onChange={(e) => {
                         const time = Date.parse(e.target.value + "Z") / 1000;
-                        if (!Number.isFinite(time) || (replay && time > asOf)) return;
+                        if (!Number.isFinite(time) || time === p.time || (replay && time > asOf)) return;
                         const points = active.points.map((anchor, j) => j === i ? { ...anchor, time } : anchor) as [Anchor, Anchor];
                         if (!sameBlock(points, active.adjustmentBlock)) return;
                         update(
@@ -241,7 +285,7 @@ export default function Drawings({
                       step=".25"
                       value={p.price}
                       onChange={(e) => {
-                        if (!Number.isFinite(+e.target.value)) return;
+                        if (!Number.isFinite(+e.target.value) || +e.target.value === p.price) return;
                         update(
                           objects.map((d) =>
                             d.id === active.id
@@ -270,9 +314,18 @@ export default function Drawings({
   );
   return (
     <>
-      {toolbarTarget ? createPortal(toolbar,toolbarTarget) : toolbar}
+      {toolbarTarget ? createPortal(toolbar, toolbarTarget) : toolbar}
+      {railTarget && createPortal(
+        <div className="drawing-rail-buttons" role="group" aria-label="Drawing shortcuts">
+          {drawingTools.map(({ id, label, Icon }) =>
+            <button key={id} type="button" title={label} aria-label={label}
+              aria-pressed={tool === id} onClick={() => selectTool(id)}>
+              <Icon size={18} strokeWidth={1.5} />
+            </button>)}
+        </div>, railTarget)}
       <svg
         ref={svg}
+        style={{ width: size.width, height: size.height }}
         className={
           "drawing-layer " +
           (tool !== "select" || drag.current ? "placing" : "")
@@ -304,22 +357,18 @@ export default function Drawings({
           setTool("select");
         }}
         onPointerMove={(e) => {
-          if (!drag.current) return;
+          const gesture = drag.current;
+          if (!gesture) return;
           const p = point(e);
-          const drawing = visible.find(d => d.id === drag.current?.id);
-          if (p && drawing && (!adjusted || barAt(p.time)?.adjustment_block_id === drawing.adjustmentBlock))
-            update(
-              objects.map((d) =>
-                d.id === drag.current!.id
-                  ? {
-                      ...d,
-                      points: d.points.map((a, i) =>
-                        i === drag.current!.index ? p : a,
-                      ) as [Anchor, Anchor],
-                    }
-                  : d,
-              ),
-            );
+          const drawing = visible.find(d => d.id === gesture.id);
+          if (!p || !drawing || (adjusted && barAt(p.time)?.adjustment_block_id !== drawing.adjustmentBlock)) return;
+          const previous = drawing.points[gesture.index];
+          if (previous.time === p.time && previous.price === p.price) return;
+          const points = [...drawing.points] as [Anchor, Anchor];
+          points[gesture.index] = p;
+          // A drag may emit many pointer events. Its first change records the original drawing.
+          update(objects.map(d => d.id === gesture.id ? { ...d, points } : d), !gesture.changed);
+          gesture.changed = true;
         }}
         onPointerUp={() => {
           drag.current = null;
@@ -333,8 +382,8 @@ export default function Drawings({
         <defs>
           <clipPath id="drawing-price-clip">
             <rect
-              width={Math.max(0, size.width - 60)}
-              height={size.height * 0.8}
+              width={size.width}
+              height={size.height}
             />
           </clipPath>
         </defs>
@@ -350,7 +399,7 @@ export default function Drawings({
                     x1={x}
                     x2={x}
                     y1="0"
-                    y2={size.height * 0.8}
+                    y2={size.height}
                     stroke={settings.boundaries.color}
                     strokeDasharray={
                       settings.boundaries.style === 1
@@ -388,9 +437,9 @@ export default function Drawings({
                   }}
                 >
                   {d.type === "horizontal" ? (
-                    <line x1="0" x2={size.width - 60} y1={a.y} y2={a.y} />
+                    <line x1="0" x2={size.width} y1={a.y} y2={a.y} />
                   ) : d.type === "ray" ? (
-                    <line x1={a.x} x2={size.width - 60} y1={a.y} y2={a.y} />
+                    <line x1={a.x} x2={size.width} y1={a.y} y2={a.y} />
                   ) : d.type === "trendline" ? (
                     <line x1={a.x} x2={b.x} y1={a.y} y2={b.y} />
                   ) : d.type === "fibonacci" ? (
@@ -451,7 +500,7 @@ export default function Drawings({
                         onPointerDown={(e) => {
                           if (tool !== "select") return;
                           e.stopPropagation();
-                          drag.current = { id: d.id, index: i };
+                          drag.current = { id: d.id, index: i, changed: false };
                           svg.current!.setPointerCapture(e.pointerId);
                           tick((t) => t + 1);
                         }}

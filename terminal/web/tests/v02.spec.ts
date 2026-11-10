@@ -14,7 +14,12 @@ test("price/time projection and replay annotation availability", () => {
   });
   expect(normalized.width).toBe(290);
   expect(normalized.height).toBe(1000);
-  expect(normalized.indicators.vwap.color).toBe("#deb568");
+  expect(normalized.indicators.vwap.color).toBe("#356bff");
+  const previousPalette = { vwap: { color: "#deb568" }, levels: { color: "#657793" },
+    opening: { color: "#779bea" } };
+  expect(normalizeWorkspace({ indicators: previousPalette }).indicators.vwap.color).toBe("#356bff");
+  expect(normalizeWorkspace({ indicators: { ...previousPalette, vwap: { color: "#ffff00" } } })
+    .indicators.vwap.color).toBe("#ffff00");
   for (const type of [
     "horizontal",
     "ray",
@@ -71,6 +76,7 @@ test("v0.2 real-data workspace, drawings, persistence and causal replay", async 
   await page.goto("/");
   const start = page.getByRole("button", { name: "Start replay", exact: true });
   await expect(start).toBeEnabled({ timeout: 60000 });
+  await page.getByRole("button", { name: "Chart details" }).click();
   const contract = await page
       .getByLabel("Contract", { exact: true })
       .inputValue(),
@@ -107,7 +113,9 @@ test("v0.2 real-data workspace, drawings, persistence and causal replay", async 
     "fibonacci",
     "range",
   ]) {
-    await page.getByLabel("Drawing tool", { exact: true }).selectOption(type);
+    if (type === "horizontal")
+      await page.getByRole("button", { name: "Horizontal level", exact: true }).click();
+    else await page.getByLabel("Drawing tool", { exact: true }).selectOption(type);
     const b = (await chart.boundingBox())!;
     await page.mouse.click(b.x + b.width * .25, b.y + b.height * .32);
     if (!["horizontal", "ray"].includes(type))
@@ -196,6 +204,7 @@ test("v0.2 real-data workspace, drawings, persistence and causal replay", async 
   });
   await page.reload();
   await expect(start).toBeEnabled();
+  await page.getByRole("button", { name: "Chart details" }).click();
   await expect(page.getByLabel("Contract", { exact: true })).toHaveValue(
     contract,
   );

@@ -86,7 +86,7 @@ function AuctionTools({ chart, series, selected, data, identity, replay, target 
   useEffect(() => {
     if (!pickingHere || !data) return;
     const pick = (event: MouseEventParams<Time>) => {
-      if (!event.point || typeof event.time !== "number") return;
+      if (!event.point || event.paneIndex !== 0 || typeof event.time !== "number") return;
       const bar = data.bars.find(b => b.time === event.time);
       const pickedPrice = series.coordinateToPrice(event.point.y);
       if (!bar || pickedPrice === null || bar.available_at > cutoff ||
@@ -129,8 +129,9 @@ function AuctionTools({ chart, series, selected, data, identity, replay, target 
   const toggle = (name: "profile" | "prior" | "bands", label: string) =>
     <label><input type="checkbox" checked={settings[name]} onChange={e => update({ [name]: e.target.checked })} /> {label}</label>;
   return <>
-    {target && createPortal(<button type="button" aria-expanded={open} aria-controls="auction-tools"
-      onClick={() => { setOpen(!open); setPicking(""); }}>Auction analytics</button>, target)}
+    {target && createPortal(<button type="button" aria-label="Auction analytics" title="Auction analytics"
+      aria-expanded={open} aria-controls="auction-tools"
+      onClick={() => { setOpen(!open); setPicking(""); }}>Auction</button>, target)}
     <AuctionOverlay chart={chart} series={series} data={data} settings={settings} anchor={settings.vwap === "manual" ? anchor : null}
       profile={profile.result} tpo={tpo.result} vwap={vwap.result} context={context.result} />
     {open && <aside className="auction-tools" id="auction-tools" aria-label="Auction analytics">

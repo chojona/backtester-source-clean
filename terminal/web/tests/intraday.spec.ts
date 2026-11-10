@@ -32,7 +32,7 @@ test.describe("constructed intraday fixture", () => {
     page.on("pageerror", error => errors.push(error.message));
     await openRaw(page);
     const chart = page.getByTestId("market-chart");
-    await page.getByLabel("Drawing tool", { exact: true }).selectOption("horizontal");
+    await page.getByRole("button", { name: "Horizontal level", exact: true }).click();
     const box = (await chart.boundingBox())!;
     await page.mouse.click(box.x + box.width * 0.25, box.y + box.height * 0.35);
     await expect(page.locator(".drawing-toolbar summary")).toHaveText("Objects (1)");
@@ -69,7 +69,9 @@ test.describe("constructed intraday fixture", () => {
     await expect(page.locator(".drawing-toolbar summary")).toHaveText("Objects (1)");
 
     await page.getByRole("button", { name: "Fit history" }).click();
+    await page.getByRole("button", { name: "Chart details" }).click();
     await page.getByLabel("Show rollovers").check();
+    await page.getByRole("button", { name: "Chart details" }).click();
     await expect(page.getByTestId("roll-marker").locator("title")).toContainText("overlap unresolved");
     const newer = page.waitForResponse(response => isWindow(response.url()) &&
       new URL(response.url()).searchParams.has("cursor"));
