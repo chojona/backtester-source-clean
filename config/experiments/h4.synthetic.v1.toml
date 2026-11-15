@@ -1,0 +1,23 @@
+schema_version = 1
+family = ["H1", "H2", "H3", "H4", "H5", "H6", "H7", "H8", "H9", "H10"]
+
+[[experiments]]
+id = "H4"
+revision = "1.0.0"
+stage = "synthetic"
+title = "Opening range acceptance continues"
+instrument = "NQ"
+timezone = "America/New_York"
+cash_open = "09:30"
+cash_close = "16:00"
+opening_minutes = 30
+scan_through = "11:27"
+outside_ticks = 1
+confirmation_bars = 2
+hold_minutes = 30
+delay_minutes = 1
+round_trip_fee_cents = 500
+bootstrap_draws = 10000
+block_lengths = [5, 2, 10, 20]
+seed = 401
+amendments_pending = ["A1", "A2", "A3", "A4", "A5", "A6"]
