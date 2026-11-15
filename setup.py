@@ -1,5 +1,7 @@
 from setuptools import setup, find_packages
 
+experiment_dependencies = ["pyarrow==25.0.1", "tzdata==2026.6; sys_platform == 'win32'"]
+
 setup(
     name="futures-research-backtester",
     version="1.0.0",
@@ -8,5 +10,10 @@ setup(
                   "backtester.terminal": ["*.html", "*.js"]},
     python_requires=">=3.12",
     entry_points={"console_scripts": ["backtester=backtester.__main__:main"]},
-    extras_require={"test": ["pytest==8.4.2", "jsonschema==4.26.0"], "databento": ["databento==0.87.0"], "charts": ["matplotlib==3.11.2"]},
+    extras_require={
+        "test": ["pytest==8.4.2", "jsonschema==4.26.0", *experiment_dependencies],
+        "experiments": experiment_dependencies,
+        "databento": ["databento==0.87.0"],
+        "charts": ["matplotlib==3.11.2"],
+    },
 )

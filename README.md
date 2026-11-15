@@ -52,6 +52,20 @@ These examples are deterministic software fixtures, not observed prices or evide
 
 The intraday CLI supports ES, MES, NQ, MNQ, GC, and MGC. The terminal is specifically bound to the NQ release. Its Strategy Research, Backtest Results, and Experiment History tabs remain inactive; they are not connected to the Python research utilities.
 
+## Synthetic H4 acceptance fixture
+
+Run the built-in fixture from the repository root after installing the `experiments` extra, which is also included in `test`.
+
+```sh
+python -m pip install -e '.[experiments]'
+python -m backtester.experiments synthetic --protocol config/experiments/h4.synthetic.v1.toml --output results/experiments
+python -m backtester.experiments verify "results/experiments/synthetic-RUN_ID"
+```
+
+Use the run directory printed by the synthetic command for verification. The built-in sessions exercise the matched-time first-cross benchmark and the opening-range acceptance filter. The runner records the synthetic inputs and assumptions before scoring, then publishes a checksummed report, event evidence, and paired Parquet ledgers in integer USD cents. Identical retries reuse the run directory and append a trial record. Choose a local output filesystem that supports hard links.
+
+The report uses a centered stationary session bootstrap with percentile confidence intervals and a ten-slot Holm calculation. Untested slots enter the synthetic calculation at 1. The registry only enables the constructed H4 fixture and records amendments A1–A6 as pending.
+
 ## Repository layout
 
 ```text
