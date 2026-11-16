@@ -26,7 +26,7 @@ def sha256(path):
 
 def code_snapshot():
     root = Path(__file__).parent
-    files = {str(p.relative_to(root)): sha256(p) for p in sorted(root.rglob("*.py"))}
+    files = {p.relative_to(root).as_posix(): sha256(p) for p in sorted(root.rglob("*.py"))}
     return dict(files=files, sha256=hashlib.sha256(json.dumps(files, sort_keys=True).encode()).hexdigest())
 
 

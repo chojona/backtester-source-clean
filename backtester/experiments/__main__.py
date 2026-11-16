@@ -4,6 +4,7 @@ from argparse import ArgumentParser
 from dataclasses import asdict
 from datetime import datetime, timezone
 from importlib.metadata import PackageNotFoundError, version
+import json
 from pathlib import Path
 import platform
 from statistics import mean
@@ -14,11 +15,14 @@ from zoneinfo import TZPATH
 from .artifacts import (
     SCHEMA_VERSION, canonical_json, digest, freeze_manifest, publish_results, read_verified, record_attempt,
 )
+from .admission import inventory_archive, inventory_pilot
+from .custody import evaluate_locked, prepare_rehearsal
 from .evaluation import evaluate
 from .inputs import acceptance_fixture
 from .ledger import pair_session, scenarios
 from .protocol import load_registry
 from .rules import detect_opening_range
+from .validation import synthetic_validation
 
 
 def _code_provenance() -> dict:
@@ -126,12 +130,33 @@ def main() -> None:
     synthetic.add_argument("--output", required=True, type=Path)
     verify = commands.add_parser("verify", help="Verify a completed synthetic run")
     verify.add_argument("run_directory", type=Path)
+    prepare = commands.add_parser("prepare-rehearsal", help="Freeze the built-in synthetic holdout plan")
+    prepare.add_argument("store", type=Path)
+    rehearsal = commands.add_parser("evaluate-rehearsal", help="Consume a prepared synthetic holdout once")
+    rehearsal.add_argument("store", type=Path)
+    rehearsal.add_argument("--confirm-binding", required=True)
+    inventory = commands.add_parser("inventory-pilot", help="Inventory the 2023 pilot evidence without decoding bars")
+    inventory.add_argument("evidence_root", type=Path)
+    archive = commands.add_parser("inventory-archive", help="Inventory outright archive and terminal coverage metadata")
+    archive.add_argument("evidence_root", type=Path)
+    commands.add_parser("validate-synthetic", help="Run constructed bootstrap, power and SPA checks")
     args = parser.parse_args()
     if args.command == "synthetic":
         print(run_synthetic(args.protocol, args.output).resolve())
-    else:
+    elif args.command == "verify":
         report = read_verified(args.run_directory)
         print(f"{report['run_id']} verified ({report['eligible_sessions']} eligible synthetic sessions)")
+    elif args.command == "prepare-rehearsal":
+        print(prepare_rehearsal(args.store))
+    elif args.command == "evaluate-rehearsal":
+        report = evaluate_locked(args.store, stage="synthetic", confirmation=args.confirm_binding)
+        print(canonical_json(report).decode(), end="")
+    elif args.command == "inventory-pilot":
+        print(json.dumps(inventory_pilot(args.evidence_root), indent=2))
+    elif args.command == "inventory-archive":
+        print(json.dumps(inventory_archive(args.evidence_root), indent=2))
+    else:
+        print(json.dumps(synthetic_validation(), indent=2))
 
 
 if __name__ == "__main__":

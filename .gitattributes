@@ -7,3 +7,5 @@
 *.toml text eol=lf
 *.txt text eol=lf
 *.lock text eol=lf
+# The vendored browser asset is verified by its published byte digest.
+backtester/vendor/lightweight-charts-5.1.0.js text eol=lf
