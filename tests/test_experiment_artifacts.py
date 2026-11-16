@@ -81,3 +81,18 @@ def test_incomplete_write_is_unreadable_and_retry_resumes(tmp_path, monkeypatch)
     index_path.write_bytes(canonical_json(index))
     with pytest.raises(ValueError, match="Unexpected ledger schema"):
         read_verified(run)
+
+
+def test_verify_refuses_non_synthetic_manifest_before_reading_ledgers(tmp_path):
+    with pytest.raises(ValueError, match="Expected a synthetic run directory"):
+        read_verified(tmp_path / "sealed-historical")
+    run = tmp_path / ("synthetic-" + "0" * 64)
+    run.mkdir()
+    manifest = canonical_json({"stage": "historical", "schema_version": 1, "run_id": run.name})
+    (run / "manifest.json").write_bytes(manifest)
+    (run / "index.json").write_bytes(canonical_json({
+        "schema_version": 1, "run_id": run.name, "status": "complete",
+        "sha256": {name: digest(manifest) for name in INDEXED_FILES},
+    }))
+    with pytest.raises(ValueError, match="Invalid or misbound synthetic manifest"):
+        read_verified(run)

@@ -130,18 +130,28 @@ def publish_results(run: Path, report: dict, trades, sessions, events, selection
 
 
 def read_verified(run: Path) -> dict:
-    index = json.loads((run / "index.json").read_bytes())
+    if not re.fullmatch(r"synthetic-[0-9a-f]{64}", run.name) or run.is_symlink():
+        raise ValueError("Expected a synthetic run directory")
+
+    def read_local(name: str) -> bytes:
+        path = run / name
+        if path.is_symlink():
+            raise ValueError("Synthetic run artifacts must be local files")
+        return path.read_bytes()
+
+    index = json.loads(read_local("index.json"))
     if (set(index) != {"schema_version", "run_id", "status", "sha256"}
             or index["schema_version"] != SCHEMA_VERSION or index["status"] != "complete"
             or index["run_id"] != run.name or set(index["sha256"]) != INDEXED_FILES):
         raise ValueError("Invalid artifact index")
-    files = {}
-    for name, expected in index["sha256"].items():
-        content = (run / name).read_bytes()
-        if digest(content) != expected:
+    def checked(name: str) -> bytes:
+        content = read_local(name)
+        if digest(content) != index["sha256"][name]:
             raise ValueError(f"Checksum mismatch for {name}")
-        files[name] = content
-    manifest = _read_manifest(run, files["manifest.json"])
+        return content
+
+    manifest = _read_manifest(run, checked("manifest.json"))
+    files = {name: checked(name) for name in sorted(INDEXED_FILES - {"manifest.json"})}
     for name, row_type in (("trades.parquet", TradeRow), ("sessions.parquet", SessionRow)):
         actual = pq.read_schema(pa.BufferReader(files[name]))
         if not actual.equals(_ledger_schema(row_type, manifest), check_metadata=True):

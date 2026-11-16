@@ -66,6 +66,8 @@ Use the run directory printed by the synthetic command for verification. The bui
 
 The report uses a centered stationary session bootstrap with percentile confidence intervals and a ten-slot Holm calculation. Untested slots enter the synthetic calculation at 1. The registry only enables the constructed H4 fixture and records amendments A1–A6 as pending.
 
+The [research foundation guide](docs/SYNTHETIC_RESEARCH_FOUNDATION.md) covers chronological planning, synthetic holdout custody, power and inference diagnostics, and the read-only pilot inventory.
+
 ## Repository layout
 
 ```text
